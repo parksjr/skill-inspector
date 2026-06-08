@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/parksjr/skill-inspector/internal/loader"
 )
 
 func main() {
@@ -12,5 +15,20 @@ func main() {
 	}
 
 	input := os.Args[1]
-	fmt.Println("Loading: " + input)
+
+	sf, err := loader.Load(input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	lines := strings.Split(sf.Content, "\n")
+	fmt.Printf("Skill: %s\n", sf.SkillName)
+	fmt.Printf("--- first 5 lines ---\n")
+	for i, line := range lines {
+		if i >= 5 {
+			break
+		}
+		fmt.Println(line)
+	}
 }
