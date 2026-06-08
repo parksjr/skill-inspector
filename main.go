@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/parksjr/skill-inspector/internal/colorize"
 	"github.com/parksjr/skill-inspector/internal/loader"
 	"github.com/parksjr/skill-inspector/internal/parser"
 )
@@ -25,17 +26,15 @@ func main() {
 
 	fmt.Printf("Skill: %s\n\n", sf.SkillName)
 
-	// --- Source preview ---
+	// --- Source view (colorized) ---
 	lines := strings.Split(sf.Content, "\n")
-	fmt.Println("=== Source (first 5 lines) ===")
-	for i, line := range lines {
-		if i >= 5 {
-			break
-		}
+	colorized := colorize.ColorizeLines(lines)
+	fmt.Println("=== Source ===")
+	for _, line := range colorized {
 		fmt.Println(line)
 	}
 
-	// --- Parser findings ---
+	// --- Hidden content view ---
 	result := parser.Parse(sf.Content)
 
 	fmt.Println("\n=== Frontmatter ===")
@@ -54,7 +53,7 @@ func main() {
 		fmt.Println("✓ None found")
 	} else {
 		for i, c := range result.HTMLComments {
-			fmt.Printf("[%d] Lines %d–%d: %s\n", i+1, c.StartLine, c.EndLine, c.Raw)
+			fmt.Printf("[%d] Lines %d–%d:\n%s\n", i+1, c.StartLine, c.EndLine, c.Raw)
 		}
 	}
 
