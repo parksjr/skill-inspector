@@ -4,6 +4,16 @@
 
 Agent skills can carry hidden malicious instructions through prompt injection attacks — zero-width Unicode characters, invisible HTML comments, and YAML frontmatter are all commonly used to insert instructions that LLM agents will execute without the user ever seeing them. `skill-inspector` surfaces this hidden content before you install a skill, so you can audit what you're actually running.
 
+## Showcase
+
+**Inspecting a clean skill** — source view with syntax highlighting, hidden content view shows nothing suspicious:
+
+![Inspecting a clean skill file](demos/demo-clean.gif)
+
+**Catching a malicious skill** — source looks innocent, but the hidden content view exposes YAML frontmatter with hidden directives, an HTML comment with override instructions, and embedded zero-width Unicode characters:
+
+![Catching a malicious skill file](demos/demo-malicious.gif)
+
 ## Installation
 
 ### Quick Install
