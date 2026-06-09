@@ -3,7 +3,9 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -70,6 +72,19 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 	sourceLines := buildSourceLines(sf)
 	hiddenLines := buildHiddenLines(result)
 
+	// Read keypresses in a dedicated goroutine so the main loop can also
+	// react to SIGWINCH without waiting for a keypress.
+	keyCh := make(chan action)
+	go func() {
+		for {
+			keyCh <- readKey()
+		}
+	}()
+
+	sigWinch := make(chan os.Signal, 1)
+	signal.Notify(sigWinch, syscall.SIGWINCH)
+	defer signal.Stop(sigWinch)
+
 	for {
 		s.updateSize()
 
@@ -94,8 +109,14 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 		}
 		s.render(sf.SkillName, lines)
 
-		action := readKey()
-		switch action {
+		var act action
+		select {
+		case act = <-keyCh:
+		case <-sigWinch:
+			continue // re-render with updated size, no key action
+		}
+
+		switch act {
 		case actionQuit:
 			fmt.Print(clearScreen + moveCursorHome)
 			return nil
