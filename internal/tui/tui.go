@@ -8,6 +8,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/parksjr/skill-inspector/internal/colorize"
+	"github.com/parksjr/skill-inspector/internal/installer"
 	"github.com/parksjr/skill-inspector/internal/loader"
 	"github.com/parksjr/skill-inspector/internal/parser"
 )
@@ -106,7 +107,7 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 				s.scrollOffset = 0
 			}
 		case actionInstall:
-			showInstallStub(sf.SkillName, s.width)
+			runInstall(sf, s)
 		}
 	}
 }
@@ -284,18 +285,65 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	return lines
 }
 
-// showInstallStub temporarily prints an "install not yet implemented" message
-// in the footer area, then waits for any key before returning to normal rendering.
-func showInstallStub(skillName string, width int) {
-	msg := fmt.Sprintf(" ⚠  Install for %q — not yet implemented (Phase 6). Press any key to continue.", skillName)
-	if len(msg) > width {
-		msg = msg[:width]
-	}
+// runInstall handles the interactive install confirmation and execution.
+// It runs within raw terminal mode — all I/O uses the raw terminal directly.
+func runInstall(sf *loader.SkillFile, s *state) {
+	home, _ := os.UserHomeDir()
+	installPath := home + "/.agents/skills/" + sf.SkillName
 
-	fmt.Print("\033[999;1H" + invertOn + padRight(msg, width) + invertOff)
+	// Show confirmation prompt in footer area.
+	prompt := fmt.Sprintf(" Install %q → %s ? [y/N] ", sf.SkillName, installPath)
+	if len(prompt) > s.width {
+		prompt = prompt[:s.width]
+	}
+	fmt.Print("\033[999;1H" + "\033[7m" + padRight(prompt, s.width) + "\033[0m")
 
 	buf := make([]byte, 1)
-	_, _ = os.Stdin.Read(buf)
+	os.Stdin.Read(buf) //nolint:errcheck
+	if buf[0] != 'y' && buf[0] != 'Y' {
+		// Cancelled — redraw will clear the prompt on next render cycle.
+		return
+	}
+
+	// Run the install.
+	result, err := installer.Install(sf.SkillName, sf.SourcePath, sf.Content, sf.IsURL)
+	showInstallResult(result, err, s)
+}
+
+// showInstallResult displays the install outcome and waits for a keypress.
+func showInstallResult(result *installer.InstallResult, installErr error, s *state) {
+	var lines []string
+	if installErr != nil {
+		lines = append(lines, fmt.Sprintf(" ✗ Install failed: %v", installErr))
+	} else {
+		lines = append(lines, fmt.Sprintf(" ✓ Installed to %s", result.InstallPath))
+		for _, lr := range result.Links {
+			switch {
+			case lr.Err != nil:
+				lines = append(lines, fmt.Sprintf("   ✗ Error  %-10s %v", lr.Agent, lr.Err))
+			case lr.Skipped:
+				lines = append(lines, fmt.Sprintf("   — Skipped %-10s (directory not found)", lr.Agent))
+			case lr.Linked:
+				lines = append(lines, fmt.Sprintf("   ✓ Linked  %-10s %s", lr.Agent, lr.Path))
+			}
+		}
+	}
+	lines = append(lines, " Press any key to continue…")
+
+	// Display lines starting near the bottom of the screen.
+	startRow := s.height - len(lines) - 1
+	if startRow < 2 {
+		startRow = 2
+	}
+	for i, line := range lines {
+		if len(line) > s.width {
+			line = line[:s.width]
+		}
+		fmt.Printf("\033[%d;1H\033[7m%s\033[0m", startRow+i, padRight(line, s.width))
+	}
+
+	buf := make([]byte, 1)
+	os.Stdin.Read(buf) //nolint:errcheck
 }
 
 // maxScrollOffset returns the maximum valid scroll offset given total lines and
