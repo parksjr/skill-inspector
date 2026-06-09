@@ -39,6 +39,8 @@ type state struct {
 const (
 	clearScreen    = "\033[2J"
 	moveCursorHome = "\033[H"
+	enterAltScreen = "\033[?1049h"
+	exitAltScreen  = "\033[?1049l"
 	hideCursor     = "\033[?25l"
 	showCursor     = "\033[?25h"
 	invertOn       = "\033[7m"
@@ -60,11 +62,11 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 		return fmt.Errorf("failed to enter raw terminal mode: %w", err)
 	}
 	defer func() {
+		fmt.Print(showCursor + exitAltScreen)
 		_ = term.Restore(int(os.Stdin.Fd()), oldState)
-		fmt.Print(showCursor)
 	}()
 
-	fmt.Print(hideCursor)
+	fmt.Print(enterAltScreen + hideCursor)
 
 	s := &state{currentView: viewSource}
 	s.updateSize()
