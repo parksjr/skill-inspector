@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -23,10 +24,13 @@ const (
 
 // state holds all mutable TUI state.
 type state struct {
-	currentView  view
-	scrollOffset int
-	width        int
-	height       int
+	currentView   view
+	scrollOffset  int
+	width         int
+	height        int
+	wrappedSrc    []string
+	wrappedHidden []string
+	lastWrapWidth int
 }
 
 // ANSI control sequences.
@@ -68,9 +72,25 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 
 	for {
 		s.updateSize()
-		lines := sourceLines
+
+		// Re-wrap content whenever the terminal width changes.
+		if s.width != s.lastWrapWidth {
+			s.wrappedSrc = wrapLines(sourceLines, s.width)
+			s.wrappedHidden = wrapLines(hiddenLines, s.width)
+			s.lastWrapWidth = s.width
+			// Clamp scroll offset in case wrapping made content shorter.
+			active := s.wrappedSrc
+			if s.currentView == viewHidden {
+				active = s.wrappedHidden
+			}
+			if max := maxScrollOffset(active, s.height); s.scrollOffset > max {
+				s.scrollOffset = max
+			}
+		}
+
+		lines := s.wrappedSrc
 		if s.currentView == viewHidden {
-			lines = hiddenLines
+			lines = s.wrappedHidden
 		}
 		s.render(sf.SkillName, lines)
 
@@ -207,8 +227,7 @@ func (s *state) render(skillName string, lines []string) {
 		if drawn >= contentHeight {
 			break
 		}
-		printLine := truncateLine(line, s.width)
-		sb.WriteString(printLine + "\033[K\r\n")
+		sb.WriteString(line + "\033[K\r\n")
 		drawn++
 	}
 	for drawn < contentHeight {
@@ -389,8 +408,69 @@ func stripANSI(s string) string {
 	return out.String()
 }
 
+// wrapLine splits a single line (which may contain ANSI escape sequences) into
+// segments of at most maxWidth visible characters, preserving escape sequences
+// in the correct segment.
+func wrapLine(line string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{line}
+	}
+	if len([]rune(stripANSI(line))) <= maxWidth {
+		return []string{line}
+	}
+
+	var result []string
+	var cur strings.Builder
+	visible := 0
+	i := 0
+
+	for i < len(line) {
+		// Consume ANSI escape sequence — not a visible character.
+		if line[i] == '\033' && i+1 < len(line) && line[i+1] == '[' {
+			j := i + 2
+			for j < len(line) && (line[j] < 'A' || line[j] > 'Z') && (line[j] < 'a' || line[j] > 'z') {
+				j++
+			}
+			if j < len(line) {
+				j++
+			}
+			cur.WriteString(line[i:j])
+			i = j
+			continue
+		}
+
+		// Flush current segment and start a new one when width is reached.
+		if visible == maxWidth {
+			result = append(result, cur.String())
+			cur.Reset()
+			visible = 0
+		}
+
+		r, size := utf8.DecodeRuneInString(line[i:])
+		_ = r
+		cur.WriteString(line[i : i+size])
+		visible++
+		i += size
+	}
+
+	if cur.Len() > 0 {
+		result = append(result, cur.String())
+	}
+	return result
+}
+
+// wrapLines expands every line in lines into one or more wrapped segments.
+func wrapLines(lines []string, maxWidth int) []string {
+	var out []string
+	for _, l := range lines {
+		out = append(out, wrapLine(l, maxWidth)...)
+	}
+	return out
+}
+
 // truncateLine returns the line truncated to maxWidth visible characters,
 // preserving the Reset code at the end if the line was truncated.
+// Used only for header/footer bars.
 func truncateLine(line string, maxWidth int) string {
 	if len(stripANSI(line)) <= maxWidth {
 		return line
