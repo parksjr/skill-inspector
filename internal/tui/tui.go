@@ -150,7 +150,7 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 				s.scrollOffset = 0
 			}
 		case actionInstall:
-			runInstall(sf, s)
+			runInstall(sf, result, s, keyCh)
 		}
 	}
 }
@@ -167,6 +167,8 @@ const (
 	actionPageDown
 	actionPageUp
 	actionInstall
+	actionConfirmYes
+	actionConfirmNo
 )
 
 // readKey reads a single keypress (or escape sequence) from stdin and maps it
@@ -191,6 +193,10 @@ func readKey() action {
 		return actionScrollUp
 	case n == 1 && buf[0] == 'i':
 		return actionInstall
+	case n == 1 && (buf[0] == 'y' || buf[0] == 'Y'):
+		return actionConfirmYes
+	case n == 1 && (buf[0] == 'n' || buf[0] == 'N' || buf[0] == '\r' || buf[0] == '\n'):
+		return actionConfirmNo
 	case n == 1 && buf[0] == ' ':
 		return actionPageDown
 	case n == 1 && buf[0] == 'b':
@@ -329,31 +335,113 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 
 // runInstall handles the interactive install confirmation and execution.
 // It runs within raw terminal mode — all I/O uses the raw terminal directly.
-func runInstall(sf *loader.SkillFile, s *state) {
-	home, _ := os.UserHomeDir()
-	installPath := home + "/.agents/skills/" + sf.SkillName
-
-	// Show confirmation prompt in footer area.
-	prompt := fmt.Sprintf(" Install %q → %s ? [y/N] ", sf.SkillName, installPath)
-	if len(prompt) > s.width {
-		prompt = prompt[:s.width]
-	}
-	fmt.Print("\033[999;1H" + "\033[7m" + padRight(prompt, s.width) + "\033[0m")
-
-	buf := make([]byte, 1)
-	os.Stdin.Read(buf) //nolint:errcheck
-	if buf[0] != 'y' && buf[0] != 'Y' {
-		// Cancelled — redraw will clear the prompt on next render cycle.
+func runInstall(sf *loader.SkillFile, parsed *parser.ParseResult, s *state, keyCh <-chan action) {
+	preview, err := installer.PlanInstall(sf.SkillName)
+	if err != nil {
+		showInstallResult(nil, err, s, keyCh)
 		return
 	}
 
-	// Run the install.
-	result, err := installer.Install(sf.SkillName, sf.SourcePath, sf.Content, sf.IsURL)
-	showInstallResult(result, err, s)
+	_, hasFrontmatterName := parser.FrontmatterValue(parsed.Frontmatter, "name")
+	showInstallPreviewModal(preview, !hasFrontmatterName, s)
+	for {
+		switch <-keyCh {
+		case actionConfirmYes:
+			result, installErr := installer.Install(sf.SkillName, sf.SourcePath, sf.Content, sf.IsURL)
+			showInstallResult(result, installErr, s, keyCh)
+			return
+		case actionConfirmNo, actionQuit:
+			return
+		}
+	}
+}
+
+func showInstallPreviewModal(preview *installer.InstallPreview, missingFrontmatterName bool, s *state) {
+	lines := buildInstallPreviewLines(preview, missingFrontmatterName)
+	renderModal(s, "Install confirmation", lines)
+}
+
+func buildInstallPreviewLines(preview *installer.InstallPreview, missingFrontmatterName bool) []string {
+	lines := []string{
+		fmt.Sprintf("Install %q?", preview.SkillName),
+		"",
+	}
+	if missingFrontmatterName {
+		lines = append(lines,
+			`⚠ Warning: frontmatter is missing "name".`,
+			fmt.Sprintf("  Using fallback folder name: %s", preview.SkillName),
+			"",
+		)
+	}
+
+	lines = append(lines,
+		"Files:",
+		fmt.Sprintf("  %s", preview.InstallPath),
+		"",
+		"Planned symlinks:",
+	)
+	for _, link := range preview.Links {
+		entry := fmt.Sprintf("  %s -> %s (%s)", link.Source, link.Destination, link.Agent)
+		if !link.Available {
+			entry = fmt.Sprintf("  %s -> %s (%s missing: skipped)", link.Source, link.Destination, link.Agent)
+		}
+		lines = append(lines, entry)
+	}
+	lines = append(lines, "", "Confirm: y = install, n/Enter = cancel")
+	return lines
+}
+
+func renderModal(s *state, title string, lines []string) {
+	maxInnerWidth := len(stripANSI(title))
+	for _, line := range lines {
+		if l := len(stripANSI(line)); l > maxInnerWidth {
+			maxInnerWidth = l
+		}
+	}
+
+	maxAllowed := s.width - 6
+	if maxAllowed < 20 {
+		maxAllowed = 20
+	}
+	if maxInnerWidth > maxAllowed {
+		maxInnerWidth = maxAllowed
+	}
+	if maxInnerWidth < 20 {
+		maxInnerWidth = 20
+	}
+
+	maxLines := s.height - 6
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if len(lines) > maxLines {
+		lines = append([]string{}, lines[:maxLines]...)
+		lines[len(lines)-1] = "..."
+	}
+
+	boxWidth := maxInnerWidth + 4
+	boxHeight := len(lines) + 4
+	left := (s.width-boxWidth)/2 + 1
+	top := (s.height-boxHeight)/2 + 1
+	if left < 1 {
+		left = 1
+	}
+	if top < 1 {
+		top = 1
+	}
+
+	fmt.Printf("\033[%d;%dH%s", top, left, "┌"+strings.Repeat("─", boxWidth-2)+"┐")
+	titleLine := "│ " + padRight(truncateLine(title, maxInnerWidth), maxInnerWidth) + " │"
+	fmt.Printf("\033[%d;%dH%s%s%s", top+1, left, invertOn, titleLine, invertOff)
+	for i, line := range lines {
+		bodyLine := "│ " + padRight(truncateLine(line, maxInnerWidth), maxInnerWidth) + " │"
+		fmt.Printf("\033[%d;%dH%s", top+2+i, left, bodyLine)
+	}
+	fmt.Printf("\033[%d;%dH%s", top+len(lines)+2, left, "└"+strings.Repeat("─", boxWidth-2)+"┘")
 }
 
 // showInstallResult displays the install outcome and waits for a keypress.
-func showInstallResult(result *installer.InstallResult, installErr error, s *state) {
+func showInstallResult(result *installer.InstallResult, installErr error, s *state, keyCh <-chan action) {
 	var lines []string
 	if installErr != nil {
 		lines = append(lines, fmt.Sprintf(" ✗ Install failed: %v", installErr))
@@ -384,8 +472,7 @@ func showInstallResult(result *installer.InstallResult, installErr error, s *sta
 		fmt.Printf("\033[%d;1H\033[7m%s\033[0m", startRow+i, padRight(line, s.width))
 	}
 
-	buf := make([]byte, 1)
-	os.Stdin.Read(buf) //nolint:errcheck
+	<-keyCh
 }
 
 // maxScrollOffset returns the maximum valid scroll offset given total lines and

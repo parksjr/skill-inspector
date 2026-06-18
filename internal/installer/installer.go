@@ -31,6 +31,21 @@ type InstallResult struct {
 	Links       []LinkResult // one entry per configured agent dir
 }
 
+// PlannedLink describes one symlink operation before install runs.
+type PlannedLink struct {
+	Agent       string
+	Source      string
+	Destination string
+	Available   bool // false when destination directory does not exist
+}
+
+// InstallPreview describes the install target and symlink plan.
+type InstallPreview struct {
+	SkillName   string
+	InstallPath string
+	Links       []PlannedLink
+}
+
 // defaultAgentDirs returns the hardcoded list of known agent skill directories.
 // Paths use ~ which is expanded by expandHome.
 func defaultAgentDirs() []AgentDir {
@@ -81,14 +96,7 @@ func Install(skillName, sourcePath, content string, isURL bool) (*InstallResult,
 		}
 	}
 
-	agentDirs, err := loadAgentDirs(home)
-	if err != nil {
-		agentDirs = defaultAgentDirs()
-	}
-
-	for i := range agentDirs {
-		agentDirs[i].Path = expandHome(agentDirs[i].Path, home)
-	}
+	agentDirs := resolvedAgentDirs(home)
 
 	result := &InstallResult{
 		SkillName:   skillName,
@@ -100,6 +108,51 @@ func Install(skillName, sourcePath, content string, isURL bool) (*InstallResult,
 	}
 
 	return result, nil
+}
+
+// PlanInstall returns where files will be installed and which symlinks are planned.
+func PlanInstall(skillName string) (*InstallPreview, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+
+	installDir := filepath.Join(home, ".agents", "skills", skillName)
+	agentDirs := resolvedAgentDirs(home)
+
+	preview := &InstallPreview{
+		SkillName:   skillName,
+		InstallPath: installDir,
+	}
+	for _, ad := range agentDirs {
+		dest := filepath.Join(ad.Path, skillName)
+		preview.Links = append(preview.Links, PlannedLink{
+			Agent:       ad.Name,
+			Source:      installDir,
+			Destination: dest,
+			Available:   dirExists(ad.Path),
+		})
+	}
+	return preview, nil
+}
+
+func resolvedAgentDirs(home string) []AgentDir {
+	agentDirs, err := loadAgentDirs(home)
+	if err != nil {
+		agentDirs = defaultAgentDirs()
+	}
+	for i := range agentDirs {
+		agentDirs[i].Path = expandHome(agentDirs[i].Path, home)
+	}
+	return agentDirs
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 // linkSkill creates a symlink at <agentDir.Path>/<skillName> → installDir.

@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
+
+	"github.com/parksjr/skill-inspector/internal/parser"
 )
 
 // SkillFile holds the loaded contents and metadata for a skill file.
@@ -59,11 +63,12 @@ func loadFromFile(inputPath string) (*SkillFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %q: %w", filePath, err)
 	}
+	content := string(data)
 
 	return &SkillFile{
-		Content:    string(data),
+		Content:    content,
 		SourcePath: inputPath,
-		SkillName:  skillName,
+		SkillName:  deriveSkillName(content, skillName),
 		IsURL:      false,
 	}, nil
 }
@@ -71,29 +76,101 @@ func loadFromFile(inputPath string) (*SkillFile, error) {
 // loadFromURL fetches a SkillFile from a direct HTTP/HTTPS URL.
 // The content is held in memory and never written to disk.
 func loadFromURL(rawURL string) (*SkillFile, error) {
-	resp, err := http.Get(rawURL) //nolint:noctx
+	fetchURL := normalizeGitHubBlobURL(rawURL)
+
+	resp, err := http.Get(fetchURL) //nolint:noctx
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch %q: %w", rawURL, err)
+		return nil, fmt.Errorf("failed to fetch %q: %w", fetchURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d fetching %q", resp.StatusCode, rawURL)
+		return nil, fmt.Errorf("unexpected status %d fetching %q", resp.StatusCode, fetchURL)
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body from %q: %w", rawURL, err)
+		return nil, fmt.Errorf("failed to read response body from %q: %w", fetchURL, err)
 	}
 
-	// Derive skill name from the last path segment of the URL, strip .md extension.
+	// Fallback skill name from the last path segment of the URL, strip .md extension.
 	base := path.Base(rawURL)
-	skillName := strings.TrimSuffix(base, path.Ext(base))
+	fallbackName := strings.TrimSuffix(base, path.Ext(base))
+	content := string(data)
 
 	return &SkillFile{
-		Content:    string(data),
+		Content:    content,
 		SourcePath: rawURL,
-		SkillName:  skillName,
+		SkillName:  deriveSkillName(content, fallbackName),
 		IsURL:      true,
 	}, nil
+}
+
+func deriveSkillName(content, fallback string) string {
+	parsed := parser.Parse(content)
+	if frontmatterName, ok := parser.FrontmatterValue(parsed.Frontmatter, "name"); ok {
+		if sanitized := sanitizeSkillName(frontmatterName); sanitized != "" {
+			return sanitized
+		}
+	}
+	return fallback
+}
+
+func sanitizeSkillName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range trimmed {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+			lastHyphen = false
+		case unicode.IsSpace(r), r == '/', r == '\\':
+			if !lastHyphen {
+				b.WriteByte('-')
+				lastHyphen = true
+			}
+		default:
+			if !lastHyphen {
+				b.WriteByte('-')
+				lastHyphen = true
+			}
+		}
+	}
+
+	sanitized := strings.Trim(b.String(), "-.")
+	if sanitized == "" || sanitized == "." || sanitized == ".." {
+		return ""
+	}
+	return sanitized
+}
+
+func normalizeGitHubBlobURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host != "github.com" && host != "www.github.com" {
+		return rawURL
+	}
+
+	segments := strings.Split(strings.TrimPrefix(parsed.EscapedPath(), "/"), "/")
+	if len(segments) < 5 || segments[2] != "blob" {
+		return rawURL
+	}
+
+	owner, repo := segments[0], segments[1]
+	ref := segments[3]
+	filePath := strings.Join(segments[4:], "/")
+	if owner == "" || repo == "" || ref == "" || filePath == "" {
+		return rawURL
+	}
+
+	return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + ref + "/" + filePath
 }

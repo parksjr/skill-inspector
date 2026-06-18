@@ -85,6 +85,36 @@ func Parse(content string) *ParseResult {
 	}
 }
 
+// FrontmatterValue returns the string value for key from frontmatter lines.
+// It supports simple YAML key/value lines like "name: value".
+func FrontmatterValue(fm *Frontmatter, key string) (string, bool) {
+	if fm == nil {
+		return "", false
+	}
+	for _, line := range fm.Lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		k, v, found := strings.Cut(trimmed, ":")
+		if !found || !strings.EqualFold(strings.TrimSpace(k), key) {
+			continue
+		}
+		value := strings.TrimSpace(v)
+		if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		}
+		if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		}
+		if value == "" {
+			return "", false
+		}
+		return value, true
+	}
+	return "", false
+}
+
 // extractFrontmatter looks for a YAML frontmatter block delimited by --- at the
 // very start of the file. Returns nil if no valid frontmatter block is found.
 func extractFrontmatter(lines []string) *Frontmatter {
