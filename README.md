@@ -1,8 +1,8 @@
 # skill-inspector
 
-**A zero-dependency CLI/TUI tool for inspecting agent skill files before installation.**
+**A minimal-dependency CLI/TUI tool for inspecting agent skill files before installation.**
 
-Agent skills can carry hidden malicious instructions through prompt injection attacks — zero-width Unicode characters, invisible HTML comments, and YAML frontmatter are all commonly used to insert instructions that LLM agents will execute without the user ever seeing them. `skill-inspector` surfaces this hidden content before you install a skill, so you can audit what you're actually running.
+Agent skills can carry hidden instructions through prompt injection techniques — invisible HTML comments, YAML frontmatter, and unusual Unicode characters can all hide content an agent may read but you might not notice. `skill-inspector` surfaces this hidden content before you install a skill, so you can audit what you're actually running.
 
 ## Showcase
 
@@ -43,7 +43,7 @@ You can inspect a skill from a local file, directory, or remote HTTP/HTTPS URL:
 # Inspect a local skill file
 skill-inspector ./my-skill/SKILL.md
 
-# Inspect a directory (looks for any .md files)
+# Inspect a directory (looks for SKILL.md)
 skill-inspector ./my-skill/
 
 # Inspect from a remote URL
@@ -69,23 +69,21 @@ The tool opens an interactive terminal UI showing the skill's source code with A
 When you toggle to the **Hidden Content** view (press Tab), the tool reveals three categories of potentially suspicious content:
 
 ### 1. Frontmatter
-
-YAML or TOML metadata at the start of the file (enclosed in `---` or `+++`). This often contains skill metadata but can also include hidden instructions or configuration that agents will process.
+YAML frontmatter at the start of the file (enclosed in `---`). This often contains skill metadata but can also include hidden instructions or configuration that agents will process.
 
 ### 2. HTML Comments
 
 All `<!-- ... -->` comments in the file. HTML comments are invisible in rendered Markdown and commonly used to hide instructions.
 
 ### 3. Suspicious Characters
-
-Unicode codepoints that may be used for obfuscation or prompt injection:
-
-- **Zero-Width Space** (U+200B) — completely invisible, used to split keywords
-- **Zero-Width Joiner** (U+200D) — invisible connector, obscures text
-- **Byte Order Mark** (U+FEFF) — invisible at file start
-- **Soft Hyphen** (U+00AD) — invisible line break indicator
-- **Right-to-Left Mark** (U+200F) — reverses text direction
-- **Homoglyphs** — visually identical but distinct Unicode characters (e.g., Latin 'a' vs Cyrillic 'а')
+Known Unicode codepoints that may be used for obfuscation or prompt injection, including:
+- **Zero-Width Space** (U+200B)
+- **Zero-Width Non-Joiner** (U+200C)
+- **Zero-Width Joiner** (U+200D)
+- **Zero-Width No-Break Space / BOM** (U+FEFF)
+- **Soft Hyphen** (U+00AD)
+- **No-Break Space** (U+00A0)
+- A broader set of invisible formatting/spacing characters
 
 The tool reports the character name, Unicode codepoint, position in file, and surrounding context for each suspicious character found.
 
@@ -130,31 +128,27 @@ This tool exists because **skill files are code**. Agent skills are executed by 
 - Hide malicious instructions in zero-width Unicode characters
 - Embed instructions in HTML comments that won't appear in rendered Markdown
 - Use YAML frontmatter to set dangerous parameters agents will obey
-- Use Unicode homoglyphs to disguise function names or API endpoints
 
 `skill-inspector` makes all of this visible before installation.
 
+`skill-inspector` is intentionally human-led: it does **not** score risk, label vulnerabilities, or auto-block installs. It surfaces evidence so you can decide.
+
 ### Dependency Security
 
-`skill-inspector` is written in Go with **zero external runtime dependencies** for the binary itself. The single build dependency is `golang.org/x/term`, maintained by the Go team, with zero transitive dependencies. It's used only to set raw terminal mode for TUI rendering.
+`skill-inspector` is written in Go with a small dependency footprint. It uses `golang.org/x/term` for raw terminal mode (with `golang.org/x/sys` as an indirect dependency).
 
 ## Project Structure
 
 ```
 skill-inspector/
 ├── main.go                 # Entry point, CLI parsing
-├── tui/
-│   ├── tui.go             # TUI event loop and rendering
-│   ├── view.go            # View state and mode management
-│   └── colors.go          # ANSI color definitions
-├── inspector/
-│   ├── loader.go          # Load from file, directory, or URL
-│   ├── parser.go          # Extract frontmatter, comments, suspicious chars
-│   └── characters.go      # Unicode detection and homoglyph analysis
-├── installer/
-│   ├── install.go         # Skill installation flow
-│   └── symlink.go         # Create agent-specific symlinks
-└── go.mod                 # Go module definition (no external deps)
+├── internal/
+│   ├── colorize/          # ANSI syntax coloring
+│   ├── installer/         # Install flow and symlink management
+│   ├── loader/            # Load from file, directory, or URL
+│   ├── parser/            # Extract frontmatter, comments, suspicious chars
+│   └── tui/               # TUI event loop and rendering
+└── go.mod                 # Go module definition
 ```
 
 ## License
