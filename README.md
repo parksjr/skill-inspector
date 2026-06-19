@@ -54,28 +54,32 @@ The tool opens an interactive terminal UI showing the skill's source code with A
 
 ## TUI Controls
 
-| Key | Action |
-|-----|--------|
-| Tab | Toggle between Source and Hidden Content views |
-| j / ↓ | Scroll down one line |
-| k / ↑ | Scroll up one line |
-| Space | Page down |
-| b | Page up |
-| i | Install the skill (interactive confirmation) |
-| q / Ctrl+C | Quit |
+| Key        | Action                                         |
+| ---------- | ---------------------------------------------- |
+| Tab        | Toggle between Source and Hidden Content views |
+| j / ↓      | Scroll down one line                           |
+| k / ↑      | Scroll up one line                             |
+| Space      | Page down                                      |
+| b          | Page up                                        |
+| i          | Install the skill (interactive confirmation)   |
+| q / Ctrl+C | Quit                                           |
 
 ## Hidden Content View
 
 When you toggle to the **Hidden Content** view (press Tab), the tool reveals three categories of potentially suspicious content:
 
 ### 1. Frontmatter
+
 YAML or TOML metadata at the start of the file (enclosed in `---` or `+++`). This often contains skill metadata but can also include hidden instructions or configuration that agents will process.
 
 ### 2. HTML Comments
+
 All `<!-- ... -->` comments in the file. HTML comments are invisible in rendered Markdown and commonly used to hide instructions.
 
 ### 3. Suspicious Characters
+
 Unicode codepoints that may be used for obfuscation or prompt injection:
+
 - **Zero-Width Space** (U+200B) — completely invisible, used to split keywords
 - **Zero-Width Joiner** (U+200D) — invisible connector, obscures text
 - **Byte Order Mark** (U+FEFF) — invisible at file start
@@ -91,7 +95,7 @@ To install a skill you've audited:
 
 1. Open the skill file in `skill-inspector`
 2. Press `i` to start the installation
-3. Confirm the prompt (you'll be asked to type "yes" to proceed)
+3. Confirm the prompt (you'll be asked to type "y" to proceed)
 4. The skill is installed to `~/.agents/skills/<name>/`
 5. Symlinks are automatically created in detected agent skill directories
 
@@ -101,11 +105,11 @@ To install a skill you've audited:
 
 By default, `skill-inspector` knows about these agent skill directories:
 
-| Agent | Default Path |
-|-------|--------------|
-| Claude | `~/.claude/skills` |
-| Goose | `~/.config/goose/skills` |
-| Pi | `~/.pi/skills` |
+| Agent  | Default Path             |
+| ------ | ------------------------ |
+| Claude | `~/.claude/skills`       |
+| Goose  | `~/.config/goose/skills` |
+| Pi     | `~/.pi/skills`           |
 
 To customize or add agent directories, create `~/.config/skill-inspector/config`:
 
@@ -117,7 +121,7 @@ goose=~/.config/goose/skills
 pi=~/.pi/skills
 ```
 
-**Important:** If you create a custom config file, it *replaces* all built-in defaults entirely. Include all agents you want symlinks for.
+**Important:** If you create a custom config file, it _replaces_ all built-in defaults entirely. Include all agents you want symlinks for.
 
 ## Security
 
