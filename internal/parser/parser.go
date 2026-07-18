@@ -140,6 +140,42 @@ var suspiciousRunes = map[rune]string{
 	'\uFE0D': "VARIATION SELECTOR-14",
 	'\uFE0E': "VARIATION SELECTOR-15",
 	'\uFE0F': "VARIATION SELECTOR-16",
+	// Homoglyphs — characters visually similar to ASCII (confusable detection).
+	// Cyrillic lowercase homoglyphs.
+	'\u0430': "CYRILLIC SMALL A (homoglyph: a)",
+	'\u0435': "CYRILLIC SMALL IE (homoglyph: e)",
+	'\u043E': "CYRILLIC SMALL O (homoglyph: o)",
+	'\u0440': "CYRILLIC SMALL ER (homoglyph: p)",
+	'\u0441': "CYRILLIC SMALL ES (homoglyph: c)",
+	'\u0443': "CYRILLIC SMALL U (homoglyph: y)",
+	'\u0445': "CYRILLIC SMALL HA (homoglyph: x)",
+	// Cyrillic uppercase homoglyphs.
+	'\u0410': "CYRILLIC CAPITAL A (homoglyph: A)",
+	'\u0412': "CYRILLIC CAPITAL VE (homoglyph: B)",
+	'\u0415': "CYRILLIC CAPITAL IE (homoglyph: E)",
+	'\u041A': "CYRILLIC CAPITAL KA (homoglyph: K)",
+	'\u041C': "CYRILLIC CAPITAL EM (homoglyph: M)",
+	'\u041D': "CYRILLIC CAPITAL EN (homoglyph: H)",
+	'\u041E': "CYRILLIC CAPITAL O (homoglyph: O)",
+	'\u0420': "CYRILLIC CAPITAL ER (homoglyph: P)",
+	'\u0421': "CYRILLIC CAPITAL ES (homoglyph: C)",
+	'\u0422': "CYRILLIC CAPITAL TE (homoglyph: T)",
+	'\u0425': "CYRILLIC CAPITAL HA (homoglyph: X)",
+	// Greek uppercase homoglyphs.
+	'\u0391': "GREEK CAPITAL ALPHA (homoglyph: A)",
+	'\u0392': "GREEK CAPITAL BETA (homoglyph: B)",
+	'\u0395': "GREEK CAPITAL EPSILON (homoglyph: E)",
+	'\u0396': "GREEK CAPITAL ZETA (homoglyph: Z)",
+	'\u0397': "GREEK CAPITAL ETA (homoglyph: H)",
+	'\u0399': "GREEK CAPITAL IOTA (homoglyph: I)",
+	'\u039A': "GREEK CAPITAL KAPPA (homoglyph: K)",
+	'\u039C': "GREEK CAPITAL MU (homoglyph: M)",
+	'\u039D': "GREEK CAPITAL NU (homoglyph: N)",
+	'\u039F': "GREEK CAPITAL OMICRON (homoglyph: O)",
+	'\u03A1': "GREEK CAPITAL RHO (homoglyph: P)",
+	'\u03A4': "GREEK CAPITAL TAU (homoglyph: T)",
+	'\u03A5': "GREEK CAPITAL UPSILON (homoglyph: Y)",
+	'\u03A7': "GREEK CAPITAL CHI (homoglyph: X)",
 }
 
 // Parse extracts all hidden and suspicious content from the raw text of a skill file.
