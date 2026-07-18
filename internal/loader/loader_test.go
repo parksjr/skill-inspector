@@ -35,6 +35,11 @@ func TestNormalizeGitHubBlobURL(t *testing.T) {
 			in:   "https://github.com/owner/repo/tree/main/skills",
 			want: "https://github.com/owner/repo/tree/main/skills",
 		},
+		{
+			name: "encoded path segments",
+			in:   "https://github.com/owner/repo/blob/main/skills/my%20cool%20skill/SKILL.md",
+			want: "https://raw.githubusercontent.com/owner/repo/main/skills/my%20cool%20skill/SKILL.md",
+		},
 	}
 
 	for _, tt := range tests {

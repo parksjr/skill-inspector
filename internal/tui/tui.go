@@ -77,9 +77,16 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 	// Read keypresses in a dedicated goroutine so the main loop can also
 	// react to SIGWINCH without waiting for a keypress.
 	keyCh := make(chan action)
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		for {
-			keyCh <- readKey()
+			a := readKey()
+			select {
+			case keyCh <- a:
+			case <-done:
+				return
+			}
 		}
 	}()
 
