@@ -4,7 +4,7 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 TRIM    := -trimpath
 
-.PHONY: build release clean vet
+.PHONY: build release clean vet test fmt lint
 
 # Build for the current platform
 build:
@@ -24,6 +24,19 @@ release: clean-dist
 # Run static analysis
 vet:
 	go vet ./...
+
+# Run all tests
+test:
+	go test ./...
+
+# Format all Go source files
+fmt:
+	gofmt -w .
+
+# Run vet + format check (CI-compatible)
+lint:
+	go vet ./...
+	gofmt -d .
 
 # Remove build artifacts
 clean:
