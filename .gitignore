@@ -6,3 +6,7 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Beads passive exports — source of truth is the Dolt DB
+.beads/interactions.jsonl
+.beads/issues.jsonl
