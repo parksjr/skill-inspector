@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "skill_inspector",
+  "project_id": "7d90f57a-c773-4c80-a452-8c5746372a74"
+}
