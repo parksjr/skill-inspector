@@ -22,7 +22,7 @@ Agent skills can carry hidden instructions through prompt injection techniques â
 curl -fsSL https://raw.githubusercontent.com/parksjr/skill-inspector/main/install.sh | sh
 ```
 
-The script downloads the prebuilt binary for your platform and installs it to `/usr/local/bin/skill-inspector`.
+The script downloads the prebuilt binary for your platform and installs it to `~/.local/bin/skill-inspector`. If `~/.local/bin` is not in your PATH, the installer will warn you with instructions to add it.
 
 ### Build from Source
 
