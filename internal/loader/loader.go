@@ -9,10 +9,17 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/parksjr/skill-inspector/internal/parser"
 )
+
+// maxFetchBytes is the maximum size (10 MiB) allowed when fetching from a URL.
+const maxFetchBytes = 10 << 20
+
+// httpClient is the HTTP client used for URL fetching. Tests may replace it.
+var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 // SkillFile holds the loaded contents and metadata for a skill file.
 type SkillFile struct {
@@ -78,7 +85,7 @@ func loadFromFile(inputPath string) (*SkillFile, error) {
 func loadFromURL(rawURL string) (*SkillFile, error) {
 	fetchURL := normalizeGitHubBlobURL(rawURL)
 
-	resp, err := http.Get(fetchURL) //nolint:noctx
+	resp, err := httpClient.Get(fetchURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %q: %w", fetchURL, err)
 	}
@@ -88,7 +95,7 @@ func loadFromURL(rawURL string) (*SkillFile, error) {
 		return nil, fmt.Errorf("unexpected status %d fetching %q", resp.StatusCode, fetchURL)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFetchBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body from %q: %w", fetchURL, err)
 	}

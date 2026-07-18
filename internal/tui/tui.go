@@ -284,8 +284,12 @@ func (s *state) render(skillName string, lines []string) {
 }
 
 // buildSourceLines returns the ANSI-colorized source lines for the source view.
+// Raw content is sanitized to remove terminal escape sequences before colorization.
 func buildSourceLines(sf *loader.SkillFile) []string {
 	raw := strings.Split(sf.Content, "\n")
+	for i, line := range raw {
+		raw[i] = stripANSI(line)
+	}
 	return colorize.ColorizeLines(raw)
 }
 
@@ -301,7 +305,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 		fm := result.Frontmatter
 		add(fmt.Sprintf("  Lines %d–%d:", fm.StartLine, fm.EndLine))
 		for i, l := range fm.Lines {
-			add(fmt.Sprintf("  %3d │ %s", fm.StartLine+i, l))
+			add(fmt.Sprintf("  %3d │ %s", fm.StartLine+i, stripANSI(l)))
 		}
 	}
 	add("")
@@ -313,7 +317,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 		for i, c := range result.HTMLComments {
 			add(fmt.Sprintf("  [%d] Lines %d–%d:", i+1, c.StartLine, c.EndLine))
 			for _, l := range strings.Split(c.Raw, "\n") {
-				add("      " + l)
+				add("      " + stripANSI(l))
 			}
 			add("")
 		}
@@ -497,20 +501,47 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", pad)
 }
 
-// stripANSI removes ANSI escape sequences from s for length calculation.
+// stripANSI removes all ANSI escape sequences from s for safe terminal output.
+// Handles CSI (ESC[), OSC (ESC]), DCS (ESCP), SOS (ESCX), PM (ESC^), APC (ESC_),
+// and stand-alone escape (ESC) characters that are not part of a valid sequence.
 func stripANSI(s string) string {
 	var out strings.Builder
 	i := 0
 	for i < len(s) {
-		if s[i] == '\033' && i+1 < len(s) && s[i+1] == '[' {
-			i += 2
-			for i < len(s) && (s[i] < 'A' || s[i] > 'Z') && (s[i] < 'a' || s[i] > 'z') {
-				i++
+		if s[i] == '\033' && i+1 < len(s) {
+			switch s[i+1] {
+			case '[':
+				// CSI: ESC [ ... final (0x40–0x7E)
+				i += 2
+				for i < len(s) && (s[i] < 0x40 || s[i] > 0x7E) {
+					i++
+				}
+				if i < len(s) {
+					i++ // consume final byte
+				}
+				continue
+			case ']', 'P', 'X', '^', '_':
+				// OSC (]), DCS (P), SOS (X), PM (^), APC (_):
+				// ESC type ... (BEL or ST)
+				i += 2
+				for i < len(s) {
+					// BEL (^G) terminates the string
+					if s[i] == '\007' {
+						i++
+						break
+					}
+					// ST (ESC \) terminates the string
+					if s[i] == '\033' && i+1 < len(s) && s[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+				continue
+			default:
+				// Other ESC sequences: skip the ESC byte and let the next
+				// iteration decide (standalone ESC gets output as-is).
 			}
-			if i < len(s) {
-				i++
-			}
-			continue
 		}
 		out.WriteByte(s[i])
 		i++
