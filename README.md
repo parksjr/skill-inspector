@@ -103,20 +103,23 @@ To install a skill you've audited:
 
 By default, `skill-inspector` knows about these agent skill directories:
 
-| Agent  | Default Path             |
-| ------ | ------------------------ |
-| Claude | `~/.claude/skills`       |
-| Goose  | `~/.config/goose/skills` |
-| Pi     | `~/.pi/skills`           |
+| Agent  | Default Path             | Platform    | Verified |
+| ------ | ------------------------ | ----------- | -------- |
+| Claude | `~/.claude/skills`       | macOS/Linux | ✓ (Claude Code docs) |
+| Goose  | `~/.config/goose/skills` | macOS/Linux | ✓ (XDG config convention) |
+| Pi     | `~/.pi/skills`           | macOS/Linux | Best-effort default |
+
+These defaults are probed at install time. Only directories that already exist on your system receive symlinks. You can override all defaults with a [config file](#configuration).
 
 To customize or add agent directories, create `~/.config/skill-inspector/config`:
 
 ```
-# One entry per line: agent_name=path  OR  just a path
-# Lines starting with # are comments
-claude=~/.claude/skills
-goose=~/.config/goose/skills
-pi=~/.pi/skills
+# One skill directory path per line.
+# Lines starting with # are comments.
+# Replaces all built-in defaults — include all agents you want.
+~/.claude/skills
+~/.config/goose/skills
+~/.pi/skills
 ```
 
 **Important:** If you create a custom config file, it _replaces_ all built-in defaults entirely. Include all agents you want symlinks for.
@@ -135,7 +138,14 @@ This tool exists because **skill files are code**. Agent skills are executed by 
 
 ### Dependency Security
 
-`skill-inspector` is written in Go with a small dependency footprint. It uses `golang.org/x/term` for raw terminal mode (with `golang.org/x/sys` as an indirect dependency).
+`skill-inspector` is a self-contained, single-binary Go application with no runtime dependencies. It uses two compile-time Go modules for terminal handling:
+
+| Dependency | Purpose | Notes |
+|---|---|---|
+| `golang.org/x/term` | Raw terminal mode for the TUI | Maintained by the Go core team. Required for reading keystrokes without waiting for Enter. |
+| `golang.org/x/sys` | Indirect, pulled by `x/term` | Platform-specific terminal syscalls. No additional transitive dependencies. |
+
+Both are part of the `golang.org/x` extended standard library, maintained under the same security standards as the Go standard library. The binary has no other dependencies — no third-party Go modules, no shared libraries, no runtime downloads.
 
 ## Project Structure
 
