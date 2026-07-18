@@ -1,0 +1,38 @@
+#!/bin/bash
+# Automated QA gate — runs on every commit
+# Blocks commit if go vet or gofmt find issues
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+echo "━━━ QA Gate: go vet ━━━"
+if ! go vet ./...; then
+    echo -e "${RED}✗ go vet failed — fix errors before committing${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ go vet passed${NC}"
+
+echo ""
+echo "━━━ QA Gate: gofmt ━━━"
+unformatted=$(gofmt -l . 2>/dev/null)
+if [ -n "$unformatted" ]; then
+    echo -e "${RED}✗ Unformatted files:${NC}"
+    echo "$unformatted"
+    echo "Run: gofmt -w ."
+    exit 1
+fi
+echo -e "${GREEN}✓ gofmt passed${NC}"
+
+echo ""
+echo "━━━ QA Gate: go test ━━━"
+if ! go test ./... 2>/dev/null; then
+    echo -e "${RED}✗ go test failed${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ go test passed${NC}"
+
+echo ""
+echo -e "${GREEN}All QA gates passed ✓${NC}"
