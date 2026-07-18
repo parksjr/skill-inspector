@@ -51,10 +51,10 @@ func TestLoadFromURLNormalizesGitHubBlobURL(t *testing.T) {
 	blobURL := "https://github.com/owner/repo/blob/main/SKILL.md"
 	expectedURL := "https://raw.githubusercontent.com/owner/repo/main/SKILL.md"
 
-	originalTransport := http.DefaultTransport
-	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	origClient := httpClient
+	t.Cleanup(func() { httpClient = origClient })
 
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != expectedURL {
 			t.Fatalf("request URL = %q, want %q", req.URL.String(), expectedURL)
 		}
@@ -64,7 +64,7 @@ func TestLoadFromURLNormalizesGitHubBlobURL(t *testing.T) {
 			Body:       io.NopCloser(strings.NewReader("# Demo Skill")),
 			Request:    req,
 		}, nil
-	})
+	})}
 
 	sf, err := loadFromURL(blobURL)
 	if err != nil {
@@ -79,17 +79,17 @@ func TestLoadFromURLNormalizesGitHubBlobURL(t *testing.T) {
 }
 
 func TestLoadFromURLUsesFrontmatterName(t *testing.T) {
-	originalTransport := http.DefaultTransport
-	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	origClient := httpClient
+	t.Cleanup(func() { httpClient = origClient })
 
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
 			Body:       io.NopCloser(strings.NewReader("---\nname: My Cool Skill / v2!\n---\n# Demo Skill")),
 			Request:    req,
 		}, nil
-	})
+	})}
 
 	sf, err := loadFromURL("https://example.com/SKILL.md")
 	if err != nil {
