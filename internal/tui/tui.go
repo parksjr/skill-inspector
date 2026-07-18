@@ -59,9 +59,24 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 	if err != nil {
 		return fmt.Errorf("failed to enter raw terminal mode: %w", err)
 	}
-	defer func() {
+	restoreTerminal := func() {
 		fmt.Print(showCursor + exitAltScreen)
 		_ = term.Restore(int(os.Stdin.Fd()), oldState)
+	}
+	defer restoreTerminal()
+
+	// Catch signals that would bypass the defer (SIGTERM, SIGHUP) and
+	// restore the terminal before the process terminates. In raw mode
+	// Ctrl+C is delivered as byte 0x03, not SIGINT, so SIGINT is also
+	// handled here for non-raw-mode edge cases (e.g. during install prompt
+	// in cooked mode).
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+	go func() {
+		<-sigCh
+		restoreTerminal()
+		os.Exit(1)
 	}()
 
 	fmt.Print(enterAltScreen + hideCursor)
