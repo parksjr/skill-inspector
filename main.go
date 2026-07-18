@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/parksjr/skill-inspector/internal/colorize"
 	"github.com/parksjr/skill-inspector/internal/loader"
 	"github.com/parksjr/skill-inspector/internal/parser"
 	"github.com/parksjr/skill-inspector/internal/tui"
@@ -13,23 +14,14 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) >= 2 {
-		switch os.Args[1] {
-		case "--help", "-h":
-			printHelp()
-			os.Exit(0)
-		case "--version", "-v":
-			fmt.Printf("skill-inspector version %s\n", version)
-			os.Exit(0)
-		}
-	}
+	pathArgs := parseFlags()
 
-	if len(os.Args) != 2 {
+	if len(pathArgs) != 1 {
 		fmt.Fprintf(os.Stderr, "Usage: skill-inspector <url-or-file-path>\n")
 		os.Exit(1)
 	}
 
-	input := os.Args[1]
+	input := pathArgs[0]
 
 	sf, err := loader.Load(input)
 	if err != nil {
@@ -43,6 +35,33 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// parseFlags scans os.Args for flags, sets globals, and returns
+// the non-flag positional arguments.
+func parseFlags() []string {
+	var pathArgs []string
+	for i := 1; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--help", "-h":
+			printHelp()
+			os.Exit(0)
+		case "--version", "-v":
+			fmt.Printf("skill-inspector version %s\n", version)
+			os.Exit(0)
+		case "--no-color":
+			colorize.NoColor = true
+		default:
+			pathArgs = append(pathArgs, os.Args[i])
+		}
+	}
+
+	// NO_COLOR env var (no-color.org spec): any value disables ANSI color.
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		colorize.NoColor = true
+	}
+
+	return pathArgs
 }
 
 func printHelp() {
@@ -59,6 +78,7 @@ Usage:
 Flags:
   -h, --help       Show this help message
   -v, --version    Print version string
+  --no-color       Disable ANSI color output (also NO_COLOR env var)
 
 Examples:
   skill-inspector ./my-skill/SKILL.md
