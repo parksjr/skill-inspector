@@ -209,8 +209,7 @@ func FrontmatterValue(fm *Frontmatter, key string) (string, bool) {
 		value := strings.TrimSpace(v)
 		if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && len(value) >= 2 {
 			value = value[1 : len(value)-1]
-		}
-		if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+		} else if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
 			value = value[1 : len(value)-1]
 		}
 		if value == "" {

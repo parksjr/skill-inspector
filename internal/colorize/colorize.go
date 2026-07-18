@@ -94,8 +94,24 @@ func colorizeLine(line string, state *LineState, lineIdx int) string {
 	// --- Bold/italic markers — subtle highlight ---
 	// We don't render them, but we dim them slightly so they stand out
 	// as syntax rather than content.
-	if strings.Contains(line, "**") || strings.Contains(line, "__") ||
-		strings.Contains(line, "*") || strings.Contains(line, "_") {
+	// ** and __ are unambiguous bold markers.
+	// Single * or _ is only treated as emphasis when adjacent to non-space
+	// text (avoiding false positives on bullet lists, URLs, and code).
+	hasBold := strings.Contains(line, "**") || strings.Contains(line, "__")
+	hasItalic := false
+	if !hasBold {
+		for i, ch := range line {
+			if ch == '*' || ch == '_' {
+				leftText := i > 0 && line[i-1] != ' '
+				rightText := i+1 < len(line) && line[i+1] != ' '
+				if leftText || rightText {
+					hasItalic = true
+					break
+				}
+			}
+		}
+	}
+	if hasBold || hasItalic {
 		return Dim + line + Reset
 	}
 

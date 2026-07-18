@@ -45,8 +45,6 @@ const (
 	showCursor     = "\033[?25h"
 	invertOn       = "\033[7m"
 	invertOff      = "\033[0m"
-	boldOn         = "\033[1m"
-	resetAll       = "\033[0m"
 )
 
 // Run is the entry point for the TUI. It loads the skill file, parses it,
@@ -320,7 +318,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	var lines []string
 	add := func(s string) { lines = append(lines, s) }
 
-	add(boldOn + "── Frontmatter " + strings.Repeat("─", 60) + resetAll)
+	add(colorize.Bold + "── Frontmatter " + strings.Repeat("─", 60) + colorize.Reset)
 	if result.Frontmatter == nil {
 		add("  ✓ None found")
 	} else {
@@ -332,7 +330,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	}
 	add("")
 
-	add(boldOn + "── HTML Comments " + strings.Repeat("─", 58) + resetAll)
+	add(colorize.Bold + "── HTML Comments " + strings.Repeat("─", 58) + colorize.Reset)
 	if len(result.HTMLComments) == 0 {
 		add("  ✓ None found")
 	} else {
@@ -346,7 +344,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	}
 	add("")
 
-	add(boldOn + "── Suspicious Characters " + strings.Repeat("─", 50) + resetAll)
+	add(colorize.Bold + "── Suspicious Characters " + strings.Repeat("─", 50) + colorize.Reset)
 	if len(result.SuspiciousChars) == 0 {
 		add("  ✓ None found")
 	} else {
@@ -356,7 +354,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	}
 	add("")
 
-	add(boldOn + "── YAML Risks " + strings.Repeat("─", 58) + resetAll)
+	add(colorize.Bold + "── YAML Risks " + strings.Repeat("─", 58) + colorize.Reset)
 	if len(result.YAMLRisks) == 0 {
 		add("  ✓ None found")
 	} else {
@@ -366,7 +364,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	}
 	add("")
 
-	add(boldOn + "── CDATA Sections " + strings.Repeat("─", 55) + resetAll)
+	add(colorize.Bold + "── CDATA Sections " + strings.Repeat("─", 55) + colorize.Reset)
 	if len(result.CDATASections) == 0 {
 		add("  ✓ None found")
 	} else {
@@ -380,7 +378,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	}
 	add("")
 
-	add(boldOn + "── Hidden Comments (JS/CSS) " + strings.Repeat("─", 44) + resetAll)
+	add(colorize.Bold + "── Hidden Comments (JS/CSS) " + strings.Repeat("─", 44) + colorize.Reset)
 	if len(result.HiddenComments) == 0 {
 		add("  ✓ None found")
 	} else {
@@ -707,7 +705,7 @@ func truncateLine(line string, maxWidth int) string {
 
 	// Walk the raw string counting visible runes (skipping ANSI escapes)
 	// and stop at maxWidth-1 visible characters to leave room for the
-	// resetAll marker. This avoids slicing through multi-byte runes.
+	// colorize.Reset marker. This avoids slicing through multi-byte runes.
 	visible := 0
 	i := 0
 	for i < len(line) {
@@ -725,7 +723,7 @@ func truncateLine(line string, maxWidth int) string {
 		visible++
 		i += size
 		if visible >= maxWidth {
-			return line[:i] + resetAll
+			return line[:i] + colorize.Reset
 		}
 	}
 	return line

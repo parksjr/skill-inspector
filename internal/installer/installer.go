@@ -143,6 +143,7 @@ func PlanInstall(skillName string) (*InstallPreview, error) {
 func resolvedAgentDirs(home string) []AgentDir {
 	agentDirs, err := loadAgentDirs(home)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "skill-inspector: warning: cannot load agent dirs config: %v — using defaults\n", err)
 		agentDirs = defaultAgentDirs()
 	}
 	for i := range agentDirs {
@@ -216,6 +217,9 @@ func loadAgentDirs(home string) ([]AgentDir, error) {
 	}
 
 	f, err := os.Open(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open config %q: %w", configPath, err)
+	}
 	defer f.Close()
 
 	var dirs []AgentDir
