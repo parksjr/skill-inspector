@@ -39,9 +39,9 @@ func Load(input string) (*SkillFile, error) {
 	return loadFromFile(input)
 }
 
-// isURL returns true if s begins with http:// or https://.
+// isURL returns true if s begins with https://.
 func isURL(s string) bool {
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+	return strings.HasPrefix(s, "https://")
 }
 
 // loadFromFile loads a SkillFile from a local path.

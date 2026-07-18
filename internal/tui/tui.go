@@ -351,6 +351,46 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	}
 	add("")
 
+	add(boldOn + "── YAML Risks " + strings.Repeat("─", 58) + resetAll)
+	if len(result.YAMLRisks) == 0 {
+		add("  ✓ None found")
+	} else {
+		for _, yr := range result.YAMLRisks {
+			add("  " + yr.Format())
+		}
+	}
+	add("")
+
+	add(boldOn + "── CDATA Sections " + strings.Repeat("─", 55) + resetAll)
+	if len(result.CDATASections) == 0 {
+		add("  ✓ None found")
+	} else {
+		for i, c := range result.CDATASections {
+			add(fmt.Sprintf("  [%d] Lines %d–%d:", i+1, c.StartLine, c.EndLine))
+			for _, l := range strings.Split(c.Raw, "\n") {
+				add("      " + stripANSI(l))
+			}
+			add("")
+		}
+	}
+	add("")
+
+	add(boldOn + "── Hidden Comments (JS/CSS) " + strings.Repeat("─", 44) + resetAll)
+	if len(result.HiddenComments) == 0 {
+		add("  ✓ None found")
+	} else {
+		for i, hc := range result.HiddenComments {
+			kindLabel := "CSS block"
+			if hc.Kind == "js-line" {
+				kindLabel = "JS line"
+			}
+			add(fmt.Sprintf("  [%d] %s — line %d:", i+1, kindLabel, hc.StartLine))
+			add("      " + stripANSI(hc.Raw))
+			add("")
+		}
+	}
+	add("")
+
 	return lines
 }
 

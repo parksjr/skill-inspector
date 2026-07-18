@@ -103,6 +103,10 @@ func Install(skillName, sourcePath, content string, isURL bool) (*InstallResult,
 		InstallPath: installDir,
 	}
 	for _, ad := range agentDirs {
+		if err := verifyAgentDir(ad); err != nil {
+			// Log once then skip this agent dir.
+			continue
+		}
 		lr := linkSkill(skillName, installDir, ad)
 		result.Links = append(result.Links, lr)
 	}
@@ -195,13 +199,23 @@ func linkSkill(skillName, installDir string, ad AgentDir) LinkResult {
 // If it has entries, those entries REPLACE the defaults entirely.
 func loadAgentDirs(home string) ([]AgentDir, error) {
 	configPath := filepath.Join(home, ".config", "skill-inspector", "config")
-	f, err := os.Open(configPath)
+
+	// Verify config is a regular file (not a symlink).
+	info, err := os.Lstat(configPath)
 	if os.IsNotExist(err) {
 		return defaultAgentDirs(), nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("cannot open config %q: %w", configPath, err)
+		return nil, fmt.Errorf("cannot stat config %q: %w", configPath, err)
 	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("config %q is a symlink — refusing to open", configPath)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("config %q is not a regular file", configPath)
+	}
+
+	f, err := os.Open(configPath)
 	defer f.Close()
 
 	var dirs []AgentDir
@@ -238,7 +252,7 @@ func copyDir(src, dst string) error {
 		return fmt.Errorf("cannot read directory %q: %w", src, err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
 		srcFile := filepath.Join(src, entry.Name())
@@ -279,4 +293,20 @@ func expandHome(path, home string) string {
 		return home
 	}
 	return path
+}
+
+// verifyAgentDir checks that an agent directory exists, is a directory, and is
+// not a symlink. Used as a TOCTOU defense at install time.
+func verifyAgentDir(ad AgentDir) error {
+	info, err := os.Lstat(ad.Path)
+	if err != nil {
+		return fmt.Errorf("agent dir %q (agent=%s): %w", ad.Path, ad.Name, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("agent dir %q (agent=%s) is a symlink — refusing to use", ad.Path, ad.Name)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("agent dir %q (agent=%s) is not a directory", ad.Path, ad.Name)
+	}
+	return nil
 }
