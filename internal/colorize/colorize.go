@@ -22,10 +22,18 @@ type LineState struct {
 	InCodeBlock       bool
 }
 
+// NoColor is set by the caller (main) to suppress all ANSI colorization
+// when the NO_COLOR environment variable is set or --no-color is passed.
+var NoColor bool
+
 // ColorizeLines takes a slice of raw markdown lines and returns a new slice
 // where each line has appropriate ANSI escape codes applied.
 // Lines that are already plain (no special syntax) are returned unchanged.
+// When NoColor is true, returns the input lines unchanged.
 func ColorizeLines(lines []string) []string {
+	if NoColor {
+		return lines
+	}
 	state := &LineState{}
 	out := make([]string, len(lines))
 	for i, line := range lines {

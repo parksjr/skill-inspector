@@ -149,6 +149,10 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 			if s.scrollOffset < 0 {
 				s.scrollOffset = 0
 			}
+		case actionScrollTop:
+			s.scrollOffset = 0
+		case actionScrollBottom:
+			s.scrollOffset = maxScrollOffset(lines, s.height)
 		case actionInstall:
 			runInstall(sf, result, s, keyCh)
 		}
@@ -166,6 +170,8 @@ const (
 	actionScrollUp
 	actionPageDown
 	actionPageUp
+	actionScrollTop
+	actionScrollBottom
 	actionInstall
 	actionConfirmYes
 	actionConfirmNo
@@ -201,6 +207,10 @@ func readKey() action {
 		return actionPageDown
 	case n == 1 && buf[0] == 'b':
 		return actionPageUp
+	case n == 1 && buf[0] == 'g':
+		return actionScrollTop
+	case n == 1 && buf[0] == 'G':
+		return actionScrollBottom
 	case n >= 3 && buf[0] == 27 && buf[1] == '[' && buf[2] == 'A':
 		return actionScrollUp
 	case n >= 3 && buf[0] == 27 && buf[1] == '[' && buf[2] == 'B':
