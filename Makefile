@@ -3,7 +3,7 @@ MODULE  := github.com/parksjr/skill-inspector
 LDFLAGS := -ldflags "-s -w"
 TRIM    := -trimpath
 
-.PHONY: build release clean vet
+.PHONY: build release clean vet test fmt lint
 
 # Build for the current platform
 build:
@@ -23,6 +23,19 @@ release: clean-dist
 # Run static analysis
 vet:
 	go vet ./...
+
+# Run all tests
+test:
+	go test ./...
+
+# Format all Go source files
+fmt:
+	gofmt -w .
+
+# Run vet + format check (CI-compatible)
+lint:
+	go vet ./...
+	gofmt -d .
 
 # Remove build artifacts
 clean:
