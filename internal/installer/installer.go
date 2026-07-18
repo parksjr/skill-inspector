@@ -229,15 +229,12 @@ func loadAgentDirs(home string) ([]AgentDir, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if before, after, found := strings.Cut(line, "="); found {
-			dirs = append(dirs, AgentDir{Name: strings.TrimSpace(before), Path: strings.TrimSpace(after)})
-		} else {
-			name := filepath.Base(filepath.Dir(line))
-			if name == "." || name == "" {
-				name = "custom"
-			}
-			dirs = append(dirs, AgentDir{Name: name, Path: line})
+		// Path-only format: derive agent name from parent directory.
+		name := filepath.Base(filepath.Dir(line))
+		if name == "." || name == "" {
+			name = "custom"
 		}
+		dirs = append(dirs, AgentDir{Name: name, Path: line})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading config: %w", err)
