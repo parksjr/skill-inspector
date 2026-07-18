@@ -33,11 +33,49 @@ func (s SuspiciousChar) Format() string {
 	return fmt.Sprintf("[U+%04X %s — line %d, col %d]", s.Rune, s.Name, s.Line, s.Col)
 }
 
+// YAMLRisk records a YAML directive (%YAML) or multi-document separator (... or extra ---).
+type YAMLRisk struct {
+	Line    int    // 1-indexed
+	Content string // the trimmed line content
+	Kind    string // "directive", "document-end", or "document-start"
+}
+
+// Format returns the standard display string for this finding.
+func (y YAMLRisk) Format() string {
+	switch y.Kind {
+	case "directive":
+		return fmt.Sprintf("[line %d — YAML %s]", y.Line, y.Content)
+	case "document-end":
+		return fmt.Sprintf("[line %d — YAML document separator: %s]", y.Line, y.Content)
+	case "document-start":
+		return fmt.Sprintf("[line %d — YAML document separator: %s (multi-doc start)]", y.Line, y.Content)
+	}
+	return fmt.Sprintf("[line %d — YAML risk: %s]", y.Line, y.Content)
+}
+
+// CDATASection records a <![CDATA[...]]> block.
+type CDATASection struct {
+	Raw       string
+	StartLine int
+	EndLine   int
+}
+
+// HiddenComment records a JS or CSS comment detected in content.
+type HiddenComment struct {
+	Raw       string
+	StartLine int
+	EndLine   int
+	Kind      string // "js-line", "css-block"
+}
+
 // ParseResult holds all hidden/suspicious content extracted from a skill file.
 type ParseResult struct {
 	Frontmatter     *Frontmatter
 	HTMLComments    []HTMLComment
 	SuspiciousChars []SuspiciousChar
+	YAMLRisks       []YAMLRisk
+	CDATASections   []CDATASection
+	HiddenComments  []HiddenComment
 }
 
 // suspiciousRunes maps known invisible/unusual Unicode code points to their names.
@@ -73,6 +111,35 @@ var suspiciousRunes = map[rune]string{
 	'\u206D': "ACTIVATE ARABIC FORM SHAPING",
 	'\u206E': "NATIONAL DIGIT SHAPES",
 	'\u206F': "NOMINAL DIGIT SHAPES",
+	// Bidi control characters (Trojan Source attack, CVE-2021-42574)
+	'\u202A': "LEFT-TO-RIGHT EMBEDDING",
+	'\u202B': "RIGHT-TO-LEFT EMBEDDING",
+	'\u202C': "POP DIRECTIONAL FORMATTING",
+	'\u202D': "LEFT-TO-RIGHT OVERRIDE",
+	'\u202E': "RIGHT-TO-LEFT OVERRIDE",
+	'\u2066': "LEFT-TO-RIGHT ISOLATE",
+	'\u2067': "RIGHT-TO-LEFT ISOLATE",
+	'\u2068': "FIRST STRONG ISOLATE",
+	'\u2069': "POP DIRECTIONAL ISOLATE",
+	// Tag characters (Unicode tag block, can hide content)
+	'\U000E0001': "LANGUAGE TAG",
+	// Variation selectors
+	'\uFE00': "VARIATION SELECTOR-1",
+	'\uFE01': "VARIATION SELECTOR-2",
+	'\uFE02': "VARIATION SELECTOR-3",
+	'\uFE03': "VARIATION SELECTOR-4",
+	'\uFE04': "VARIATION SELECTOR-5",
+	'\uFE05': "VARIATION SELECTOR-6",
+	'\uFE06': "VARIATION SELECTOR-7",
+	'\uFE07': "VARIATION SELECTOR-8",
+	'\uFE08': "VARIATION SELECTOR-9",
+	'\uFE09': "VARIATION SELECTOR-10",
+	'\uFE0A': "VARIATION SELECTOR-11",
+	'\uFE0B': "VARIATION SELECTOR-12",
+	'\uFE0C': "VARIATION SELECTOR-13",
+	'\uFE0D': "VARIATION SELECTOR-14",
+	'\uFE0E': "VARIATION SELECTOR-15",
+	'\uFE0F': "VARIATION SELECTOR-16",
 }
 
 // Parse extracts all hidden and suspicious content from the raw text of a skill file.
@@ -82,6 +149,9 @@ func Parse(content string) *ParseResult {
 		Frontmatter:     extractFrontmatter(lines),
 		HTMLComments:    extractHTMLComments(lines),
 		SuspiciousChars: extractSuspiciousChars(lines),
+		YAMLRisks:       extractYAMLRisks(lines),
+		CDATASections:   extractCDATASections(lines),
+		HiddenComments:  extractHiddenComments(lines),
 	}
 }
 
@@ -213,4 +283,142 @@ func extractSuspiciousChars(lines []string) []SuspiciousChar {
 		}
 	}
 	return findings
+}
+
+// extractYAMLRisks detects YAML directives (%YAML at line start) and
+// multi-document separators (... or additional --- beyond the frontmatter block).
+func extractYAMLRisks(lines []string) []YAMLRisk {
+	var risks []YAMLRisk
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// YAML directive like %YAML 1.2
+		if strings.HasPrefix(trimmed, "%YAML") {
+			risks = append(risks, YAMLRisk{
+				Line:    i + 1,
+				Content: trimmed,
+				Kind:    "directive",
+			})
+		}
+		// YAML document end marker: ... on a line by itself
+		if trimmed == "..." {
+			risks = append(risks, YAMLRisk{
+				Line:    i + 1,
+				Content: trimmed,
+				Kind:    "document-end",
+			})
+		}
+		// Additional --- separators (not the first line, which is frontmatter opener)
+		if i > 0 && trimmed == "---" {
+			risks = append(risks, YAMLRisk{
+				Line:    i + 1,
+				Content: trimmed,
+				Kind:    "document-start",
+			})
+		}
+	}
+	return risks
+}
+
+// extractCDATASections finds <![CDATA[...]]> sections in the file content.
+func extractCDATASections(lines []string) []CDATASection {
+	joined := strings.Join(lines, "\n")
+	var sections []CDATASection
+
+	searchFrom := 0
+	for {
+		start := strings.Index(joined[searchFrom:], "<![CDATA[")
+		if start == -1 {
+			break
+		}
+		start += searchFrom
+
+		end := strings.Index(joined[start:], "]]>")
+		if end == -1 {
+			// Unclosed CDATA — capture to end of file.
+			raw := joined[start:]
+			startLine := countLines(joined[:start]) + 1
+			endLine := strings.Count(joined, "\n") + 1
+			sections = append(sections, CDATASection{
+				Raw:       raw,
+				StartLine: startLine,
+				EndLine:   endLine,
+			})
+			break
+		}
+		end = start + end + 3 // include "]]>"
+
+		raw := joined[start:end]
+		startLine := countLines(joined[:start]) + 1
+		endLine := countLines(joined[:end]) + 1
+		sections = append(sections, CDATASection{
+			Raw:       raw,
+			StartLine: startLine,
+			EndLine:   endLine,
+		})
+		searchFrom = end
+	}
+	return sections
+}
+
+// extractHiddenComments detects JavaScript // line comments and CSS /* */ block
+// comments that could be used to hide content.
+func extractHiddenComments(lines []string) []HiddenComment {
+	joined := strings.Join(lines, "\n")
+	var comments []HiddenComment
+
+	// CSS /* */ block comments.
+	searchFrom := 0
+	for {
+		start := strings.Index(joined[searchFrom:], "/*")
+		if start == -1 {
+			break
+		}
+		start += searchFrom
+
+		end := strings.Index(joined[start:], "*/")
+		if end == -1 {
+			raw := joined[start:]
+			startLine := countLines(joined[:start]) + 1
+			endLine := strings.Count(joined, "\n") + 1
+			comments = append(comments, HiddenComment{
+				Raw:       raw,
+				StartLine: startLine,
+				EndLine:   endLine,
+				Kind:      "css-block",
+			})
+			break
+		}
+		end = start + end + 2 // include "*/"
+
+		raw := joined[start:end]
+		startLine := countLines(joined[:start]) + 1
+		endLine := countLines(joined[:end]) + 1
+		comments = append(comments, HiddenComment{
+			Raw:       raw,
+			StartLine: startLine,
+			EndLine:   endLine,
+			Kind:      "css-block",
+		})
+		searchFrom = end
+	}
+
+	// JS // line comments: scan line by line.
+	for i, line := range lines {
+		// Find // outside of URL protocols to reduce false positives.
+		idx := strings.Index(line, "//")
+		if idx >= 0 {
+			// Skip // that are part of URL protocols (http://, https://, ws://, etc.)
+			if idx >= 5 && line[idx-1] == ':' {
+				continue
+			}
+			comments = append(comments, HiddenComment{
+				Raw:       line,
+				StartLine: i + 1,
+				EndLine:   i + 1,
+				Kind:      "js-line",
+			})
+		}
+	}
+
+	return comments
 }
