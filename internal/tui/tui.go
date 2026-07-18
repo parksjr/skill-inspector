@@ -582,11 +582,35 @@ func wrapLines(lines []string, maxWidth int) []string {
 // preserving the Reset code at the end if the line was truncated.
 // Used only for header/footer bars.
 func truncateLine(line string, maxWidth int) string {
-	if len(stripANSI(line)) <= maxWidth {
+	if utf8.RuneCountInString(stripANSI(line)) <= maxWidth {
 		return line
 	}
-	if maxWidth > 3 && len(line) > maxWidth {
-		return line[:maxWidth-1] + resetAll
+	if maxWidth <= 3 {
+		return line
+	}
+
+	// Walk the raw string counting visible runes (skipping ANSI escapes)
+	// and stop at maxWidth-1 visible characters to leave room for the
+	// resetAll marker. This avoids slicing through multi-byte runes.
+	visible := 0
+	i := 0
+	for i < len(line) {
+		if line[i] == '\033' && i+1 < len(line) && line[i+1] == '[' {
+			i += 2
+			for i < len(line) && (line[i] < 'A' || line[i] > 'Z') && (line[i] < 'a' || line[i] > 'z') {
+				i++
+			}
+			if i < len(line) {
+				i++
+			}
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(line[i:])
+		visible++
+		i += size
+		if visible >= maxWidth {
+			return line[:i] + resetAll
+		}
 	}
 	return line
 }
