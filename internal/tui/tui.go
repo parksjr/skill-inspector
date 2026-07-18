@@ -153,6 +153,8 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 			s.scrollOffset = 0
 		case actionScrollBottom:
 			s.scrollOffset = maxScrollOffset(lines, s.height)
+		case actionShowHelp:
+			showHelp(s, keyCh)
 		case actionInstall:
 			runInstall(sf, result, s, keyCh)
 		}
@@ -173,6 +175,7 @@ const (
 	actionScrollTop
 	actionScrollBottom
 	actionInstall
+	actionShowHelp
 	actionConfirmYes
 	actionConfirmNo
 )
@@ -193,6 +196,8 @@ func readKey() action {
 		return actionQuit
 	case n == 1 && buf[0] == '\t':
 		return actionToggleView
+	case n == 1 && (buf[0] == 'h' || buf[0] == '?'):
+		return actionShowHelp
 	case n == 1 && buf[0] == 'j':
 		return actionScrollDown
 	case n == 1 && buf[0] == 'k':
@@ -448,6 +453,29 @@ func renderModal(s *state, title string, lines []string) {
 		fmt.Printf("\033[%d;%dH%s", top+2+i, left, bodyLine)
 	}
 	fmt.Printf("\033[%d;%dH%s", top+len(lines)+2, left, "└"+strings.Repeat("─", boxWidth-2)+"┘")
+}
+
+// showHelp renders a modal overlay listing keyboard controls.
+func showHelp(s *state, keyCh <-chan action) {
+	lines := []string{
+		"Navigation",
+		"  j / ↓           Scroll down one line",
+		"  k / ↑           Scroll up one line",
+		"  Space / PgDn    Page down",
+		"  b / PgUp        Page up",
+		"  g               Jump to top of document",
+		"  G               Jump to bottom of document",
+		"",
+		"Views",
+		"  Tab             Toggle Source / Hidden Content views",
+		"",
+		"Actions",
+		"  i               Install the skill (interactive confirmation)",
+		"  h / ?           Show this help overlay",
+		"  q / Ctrl+C      Quit",
+	}
+	renderModal(s, "Help", lines)
+	<-keyCh // wait for any key
 }
 
 // showInstallResult displays the install outcome and waits for a keypress.
