@@ -78,6 +78,100 @@ type ParseResult struct {
 	HiddenComments  []HiddenComment
 }
 
+// Detector identifies a single category of hidden or suspicious content.
+// Each detector is run in a fixed, documented order by the pipeline.
+type Detector interface {
+	// Name returns a short, human-readable identifier for this detector
+	// (e.g. "frontmatter", "html-comments", "suspicious-chars").
+	Name() string
+
+	// Detect scans lines and populates the relevant field(s) on result.
+	Detect(lines []string, result *ParseResult)
+}
+
+// Pipeline holds an ordered list of detectors and runs them in sequence.
+// The order is deterministic and documented.
+type Pipeline struct {
+	detectors []Detector
+}
+
+// Run executes every detector in the pipeline against content and returns
+// the aggregated ParseResult.
+func (p *Pipeline) Run(content string) *ParseResult {
+	lines := strings.Split(content, "\n")
+	result := &ParseResult{}
+	for _, d := range p.detectors {
+		d.Detect(lines, result)
+	}
+	return result
+}
+
+// DefaultPipeline returns a pipeline with all standard detectors in the
+// documented execution order:
+//
+//  1. frontmatter     — YAML frontmatter block (---)
+//  2. html-comments   — HTML <!-- --> comment blocks
+//  3. suspicious-chars — invisible/confusable Unicode code points
+//  4. yaml-risks      — YAML directives, document separators
+//  5. cdata-sections  — <![CDATA[ ... ]]> blocks
+//  6. hidden-comments — JS // and CSS /* */ comments
+func DefaultPipeline() *Pipeline {
+	return &Pipeline{
+		detectors: []Detector{
+			frontmatterDetector{},
+			htmlCommentDetector{},
+			suspiciousCharDetector{},
+			yamlRiskDetector{},
+			cdataSectionDetector{},
+			hiddenCommentDetector{},
+		},
+	}
+}
+
+// --- detector implementations ---
+
+type frontmatterDetector struct{}
+
+func (frontmatterDetector) Name() string { return "frontmatter" }
+func (frontmatterDetector) Detect(lines []string, result *ParseResult) {
+	result.Frontmatter = extractFrontmatter(lines)
+}
+
+type htmlCommentDetector struct{}
+
+func (htmlCommentDetector) Name() string { return "html-comments" }
+func (htmlCommentDetector) Detect(lines []string, result *ParseResult) {
+	result.HTMLComments = extractHTMLComments(lines)
+}
+
+type suspiciousCharDetector struct{}
+
+func (suspiciousCharDetector) Name() string { return "suspicious-chars" }
+func (suspiciousCharDetector) Detect(lines []string, result *ParseResult) {
+	result.SuspiciousChars = extractSuspiciousChars(lines)
+}
+
+type yamlRiskDetector struct{}
+
+func (yamlRiskDetector) Name() string { return "yaml-risks" }
+func (yamlRiskDetector) Detect(lines []string, result *ParseResult) {
+	result.YAMLRisks = extractYAMLRisks(lines)
+}
+
+type cdataSectionDetector struct{}
+
+func (cdataSectionDetector) Name() string { return "cdata-sections" }
+func (cdataSectionDetector) Detect(lines []string, result *ParseResult) {
+	result.CDATASections = extractCDATASections(lines)
+}
+
+type hiddenCommentDetector struct{}
+
+func (hiddenCommentDetector) Name() string { return "hidden-comments" }
+func (hiddenCommentDetector) Detect(lines []string, result *ParseResult) {
+	result.HiddenComments = extractHiddenComments(lines)
+}
+
 // suspiciousRunes maps known invisible/unusual Unicode code points to their names.
 var suspiciousRunes = map[rune]string{
 	'\u200B': "ZERO WIDTH SPACE",
@@ -179,16 +273,10 @@ var suspiciousRunes = map[rune]string{
 }
 
 // Parse extracts all hidden and suspicious content from the raw text of a skill file.
+// It delegates to the default detector pipeline, which runs detectors in a fixed,
+// documented order.
 func Parse(content string) *ParseResult {
-	lines := strings.Split(content, "\n")
-	return &ParseResult{
-		Frontmatter:     extractFrontmatter(lines),
-		HTMLComments:    extractHTMLComments(lines),
-		SuspiciousChars: extractSuspiciousChars(lines),
-		YAMLRisks:       extractYAMLRisks(lines),
-		CDATASections:   extractCDATASections(lines),
-		HiddenComments:  extractHiddenComments(lines),
-	}
+	return DefaultPipeline().Run(content)
 }
 
 // FrontmatterValue returns the string value for key from frontmatter lines.
