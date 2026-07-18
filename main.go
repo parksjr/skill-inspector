@@ -6,7 +6,6 @@ import (
 
 	"github.com/parksjr/skill-inspector/internal/colorize"
 	"github.com/parksjr/skill-inspector/internal/loader"
-	"github.com/parksjr/skill-inspector/internal/parser"
 	"github.com/parksjr/skill-inspector/internal/tui"
 )
 
@@ -29,7 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	result := parser.Parse(sf.Content)
+	result := sf.Parsed
 
 	if err := tui.Run(sf, result); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

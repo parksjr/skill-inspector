@@ -135,15 +135,19 @@ func extractFrontmatter(lines []string) *Frontmatter {
 }
 
 // extractHTMLComments finds all <!-- ... --> comment blocks in the file,
-// including multi-line comments.
+// including multi-line comments. Content inside fenced code blocks (``` or ~~~)
+// and inline code (`...`) is excluded to avoid false positives.
 func extractHTMLComments(lines []string) []HTMLComment {
-	// Join with newlines to handle multi-line comments, then scan.
 	joined := strings.Join(lines, "\n")
+	// Search in a masked copy where code blocks are replaced with spaces.
+	// Line positions are preserved, and raw content is still extracted
+	// from the original joined string.
+	masked := maskCodeBlocks(joined)
 	var comments []HTMLComment
 
 	searchFrom := 0
 	for {
-		start := strings.Index(joined[searchFrom:], "<!--")
+		start := strings.Index(masked[searchFrom:], "<!--")
 		if start == -1 {
 			break
 		}
@@ -175,6 +179,85 @@ func extractHTMLComments(lines []string) []HTMLComment {
 		searchFrom = end
 	}
 	return comments
+}
+
+// maskCodeBlocks returns a copy of s where content inside fenced code blocks
+// (``` or ~~~) and inline code (`...`) is replaced with spaces. Newlines are
+// preserved. The result is used to suppress false-positive comment detection
+// without affecting line-number calculations.
+func maskCodeBlocks(s string) string {
+	b := []byte(s)
+	inFence := byte(0)
+	fenceCount := 0
+
+	for i := 0; i < len(b); i++ {
+		lineStart := i == 0 || b[i-1] == '\n'
+
+		// Check for closing fence when inside a code block.
+		if lineStart && inFence != 0 {
+			j := i
+			for j < len(b) && b[j] == inFence {
+				j++
+			}
+			count := j - i
+			if count >= fenceCount {
+				// A closing fence must be followed only by whitespace.
+				restOK := true
+				for k := j; k < len(b) && b[k] != '\n'; k++ {
+					if b[k] != ' ' && b[k] != '\t' && b[k] != '\r' {
+						restOK = false
+						break
+					}
+				}
+				if restOK {
+					inFence = 0
+					fenceCount = 0
+					continue
+				}
+			}
+		}
+
+		if inFence != 0 {
+			// Inside a fenced code block: mask non-newline characters.
+			if b[i] != '\n' {
+				b[i] = ' '
+			}
+			continue
+		}
+
+		// Check for opening fenced code block at line start.
+		if lineStart && i < len(b) && (b[i] == '`' || b[i] == '~') {
+			ch := b[i]
+			j := i
+			for j < len(b) && b[j] == ch {
+				j++
+			}
+			if count := j - i; count >= 3 {
+				inFence = ch
+				fenceCount = count
+				i = j - 1 // will advance past on next iteration
+				continue
+			}
+		}
+
+		// Check for inline code: `content`
+		if b[i] == '`' {
+			j := i + 1
+			for j < len(b) && b[j] != '`' && b[j] != '\n' {
+				j++
+			}
+			if j < len(b) && b[j] == '`' && j > i+1 {
+				for k := i + 1; k < j; k++ {
+					if b[k] != '\n' {
+						b[k] = ' '
+					}
+				}
+				i = j // will advance past closing backtick
+				continue
+			}
+		}
+	}
+	return string(b)
 }
 
 // countLines counts the number of newline characters before position pos.

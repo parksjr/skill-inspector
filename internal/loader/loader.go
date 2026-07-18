@@ -23,10 +23,11 @@ var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 // SkillFile holds the loaded contents and metadata for a skill file.
 type SkillFile struct {
-	Content    string // raw file text
-	SourcePath string // original CLI argument (file path or URL)
-	SkillName  string // derived name used for install directory
-	IsURL      bool   // true if input was an HTTP/HTTPS URL
+	Content    string              // raw file text
+	SourcePath string              // original CLI argument (file path or URL)
+	SkillName  string              // derived name used for install directory
+	IsURL      bool                // true if input was an HTTP/HTTPS URL
+	Parsed     *parser.ParseResult // cached parse result (avoids re-parsing)
 }
 
 // Load reads a skill file from a local path or a direct HTTP/HTTPS URL.
@@ -71,12 +72,14 @@ func loadFromFile(inputPath string) (*SkillFile, error) {
 		return nil, fmt.Errorf("cannot read %q: %w", filePath, err)
 	}
 	content := string(data)
+	parsed := parser.Parse(content)
 
 	return &SkillFile{
 		Content:    content,
 		SourcePath: inputPath,
-		SkillName:  deriveSkillName(content, skillName),
+		SkillName:  deriveSkillName(parsed, skillName),
 		IsURL:      false,
+		Parsed:     parsed,
 	}, nil
 }
 
@@ -104,17 +107,18 @@ func loadFromURL(rawURL string) (*SkillFile, error) {
 	base := path.Base(rawURL)
 	fallbackName := strings.TrimSuffix(base, path.Ext(base))
 	content := string(data)
+	parsed := parser.Parse(content)
 
 	return &SkillFile{
 		Content:    content,
 		SourcePath: rawURL,
-		SkillName:  deriveSkillName(content, fallbackName),
+		SkillName:  deriveSkillName(parsed, fallbackName),
 		IsURL:      true,
+		Parsed:     parsed,
 	}, nil
 }
 
-func deriveSkillName(content, fallback string) string {
-	parsed := parser.Parse(content)
+func deriveSkillName(parsed *parser.ParseResult, fallback string) string {
 	if frontmatterName, ok := parser.FrontmatterValue(parsed.Frontmatter, "name"); ok {
 		if sanitized := sanitizeSkillName(frontmatterName); sanitized != "" {
 			return sanitized
@@ -167,15 +171,26 @@ func normalizeGitHubBlobURL(rawURL string) string {
 		return rawURL
 	}
 
-	segments := strings.Split(strings.TrimPrefix(parsed.EscapedPath(), "/"), "/")
+	// Use parsed.Path (decoded) instead of EscapedPath to avoid
+	// doubly-encoded path segments. Re-escape each file path segment
+	// individually with url.PathEscape.
+	segments := strings.Split(strings.TrimPrefix(parsed.Path, "/"), "/")
 	if len(segments) < 5 || segments[2] != "blob" {
 		return rawURL
 	}
 
 	owner, repo := segments[0], segments[1]
 	ref := segments[3]
-	filePath := strings.Join(segments[4:], "/")
-	if owner == "" || repo == "" || ref == "" || filePath == "" {
+	if owner == "" || repo == "" || ref == "" {
+		return rawURL
+	}
+
+	escaped := make([]string, len(segments[4:]))
+	for i, seg := range segments[4:] {
+		escaped[i] = url.PathEscape(seg)
+	}
+	filePath := strings.Join(escaped, "/")
+	if filePath == "" {
 		return rawURL
 	}
 
