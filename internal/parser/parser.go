@@ -1,10 +1,39 @@
 package parser
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
+
+// Level represents the advisory severity of a finding.
+// This is lightweight classification only — no risk score, no pass/fail, no blocking.
+type Level string
+
+const (
+	LevelInfo Level = "info" // informational, likely benign
+	LevelWarn Level = "warn" // worth reviewing
+	LevelHigh Level = "high" // potentially suspicious, needs attention
+)
+
+// EnableDeps controls whether the dependency/supply-chain hint detector runs.
+// Set to true from CLI flags (--check-deps). Off by default.
+var EnableDeps bool
+
+// shortHash returns the first 8 hex chars of the SHA-256 hash of s.
+func shortHash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])[:8]
+}
+
+// Finding is implemented by all finding types that have stable IDs and advisory levels.
+type Finding interface {
+	ID() string
+	Level() Level
+}
 
 // Frontmatter holds the YAML frontmatter extracted from the top of a skill file.
 type Frontmatter struct {
@@ -13,12 +42,24 @@ type Frontmatter struct {
 	EndLine   int      // 1-indexed line number of closing ---
 }
 
+// Level returns the advisory severity for frontmatter. Info-level — most skills have it.
+func (f *Frontmatter) Level() Level { return LevelInfo }
+
+// ID returns a stable identifier for this frontmatter finding.
+func (f *Frontmatter) ID() string { return "fm:" + shortHash(strings.Join(f.Lines, "\n")) }
+
 // HTMLComment holds a single extracted HTML comment block.
 type HTMLComment struct {
 	Raw       string // full text of the comment including <!-- and -->
 	StartLine int    // 1-indexed line where <!-- appears
 	EndLine   int    // 1-indexed line where --> appears
 }
+
+// Level returns the advisory severity for HTML comments. Warn-level — may hide content.
+func (h HTMLComment) Level() Level { return LevelWarn }
+
+// ID returns a stable identifier for this HTML comment finding.
+func (h HTMLComment) ID() string { return "hc:" + shortHash(h.Raw) }
 
 // SuspiciousChar records a single suspicious Unicode character found in the file.
 type SuspiciousChar struct {
@@ -31,6 +72,21 @@ type SuspiciousChar struct {
 // Format returns the standard display string for this finding.
 func (s SuspiciousChar) Format() string {
 	return fmt.Sprintf("[U+%04X %s — line %d, col %d]", s.Rune, s.Name, s.Line, s.Col)
+}
+
+// Level returns the advisory severity for this suspicious character.
+// Bidi controls and homoglyphs are high; zero-width and invisible operators are warn;
+// spaces and BOM are info.
+func (s SuspiciousChar) Level() Level {
+	if lvl, ok := suspiciousCharLevels[s.Rune]; ok {
+		return lvl
+	}
+	return LevelWarn
+}
+
+// ID returns a stable identifier for this suspicious character finding.
+func (s SuspiciousChar) ID() string {
+	return fmt.Sprintf("sc:U+%04X:line:%d:col:%d", s.Rune, s.Line, s.Col)
 }
 
 // YAMLRisk records a YAML directive (%YAML) or multi-document separator (... or extra ---).
@@ -53,12 +109,32 @@ func (y YAMLRisk) Format() string {
 	return fmt.Sprintf("[line %d — YAML risk: %s]", y.Line, y.Content)
 }
 
+// Level returns the advisory severity for this YAML risk.
+// Directives are info; document separators are warn.
+func (y YAMLRisk) Level() Level {
+	switch y.Kind {
+	case "directive":
+		return LevelInfo
+	default:
+		return LevelWarn
+	}
+}
+
+// ID returns a stable identifier for this YAML risk finding.
+func (y YAMLRisk) ID() string { return fmt.Sprintf("yr:%s:line:%d", y.Kind, y.Line) }
+
 // CDATASection records a <![CDATA[...]]> block.
 type CDATASection struct {
 	Raw       string
 	StartLine int
 	EndLine   int
 }
+
+// Level returns the advisory severity for CDATA sections. Warn-level — unusual in markdown.
+func (c CDATASection) Level() Level { return LevelWarn }
+
+// ID returns a stable identifier for this CDATA section finding.
+func (c CDATASection) ID() string { return "cd:" + shortHash(c.Raw) }
 
 // HiddenComment records a JS or CSS comment detected in content.
 type HiddenComment struct {
@@ -68,6 +144,32 @@ type HiddenComment struct {
 	Kind      string // "js-line", "css-block"
 }
 
+// Level returns the advisory severity for hidden comments. Warn-level — may hide content.
+func (h HiddenComment) Level() Level { return LevelWarn }
+
+// ID returns a stable identifier for this hidden comment finding.
+func (h HiddenComment) ID() string { return fmt.Sprintf("jc:%s:line:%d", h.Kind, h.StartLine) }
+
+// DependencyHint records a detected package/dependency reference in the skill content.
+// All findings are advisory-only — no vulnerability verdicts or blocking.
+type DependencyHint struct {
+	Line       int    // 1-indexed line number
+	Reference  string // the matched dependency reference (e.g. "pip install foo")
+	Package    string // extracted package name
+	Suspicious bool   // true if the reference matches a heuristic warning pattern
+}
+
+// Level returns the advisory severity. Info for normal references, warn for suspicious.
+func (d DependencyHint) Level() Level {
+	if d.Suspicious {
+		return LevelWarn
+	}
+	return LevelInfo
+}
+
+// ID returns a stable identifier for this dependency hint.
+func (d DependencyHint) ID() string { return fmt.Sprintf("dep:line:%d", d.Line) }
+
 // ParseResult holds all hidden/suspicious content extracted from a skill file.
 type ParseResult struct {
 	Frontmatter     *Frontmatter
@@ -76,6 +178,100 @@ type ParseResult struct {
 	YAMLRisks       []YAMLRisk
 	CDATASections   []CDATASection
 	HiddenComments  []HiddenComment
+	DependencyHints []DependencyHint
+}
+
+// Findings returns all findings in this result as a slice of Finding interface values.
+func (r *ParseResult) Findings() []Finding {
+	var out []Finding
+	if r.Frontmatter != nil {
+		out = append(out, r.Frontmatter)
+	}
+	for i := range r.HTMLComments {
+		out = append(out, &r.HTMLComments[i])
+	}
+	for i := range r.SuspiciousChars {
+		out = append(out, &r.SuspiciousChars[i])
+	}
+	for i := range r.YAMLRisks {
+		out = append(out, &r.YAMLRisks[i])
+	}
+	for i := range r.CDATASections {
+		out = append(out, &r.CDATASections[i])
+	}
+	for i := range r.HiddenComments {
+		out = append(out, &r.HiddenComments[i])
+	}
+	for i := range r.DependencyHints {
+		out = append(out, &r.DependencyHints[i])
+	}
+	return out
+}
+
+// LevelCounts holds the count of findings at each advisory level.
+type LevelCounts struct {
+	Info int
+	Warn int
+	High int
+}
+
+// Total returns the total number of findings across all levels.
+func (lc LevelCounts) Total() int { return lc.Info + lc.Warn + lc.High }
+
+// LevelSummary returns the count of findings at each advisory level.
+func (r *ParseResult) LevelSummary() LevelCounts {
+	var lc LevelCounts
+	if r.Frontmatter != nil {
+		lc.Info++
+	}
+	for _, h := range r.HTMLComments {
+		_ = h
+		lc.Warn++
+	}
+	for _, s := range r.SuspiciousChars {
+		switch s.Level() {
+		case LevelInfo:
+			lc.Info++
+		case LevelHigh:
+			lc.High++
+		default:
+			lc.Warn++
+		}
+	}
+	for _, y := range r.YAMLRisks {
+		switch y.Level() {
+		case LevelInfo:
+			lc.Info++
+		default:
+			lc.Warn++
+		}
+	}
+	for range r.CDATASections {
+		lc.Warn++
+	}
+	for range r.HiddenComments {
+		lc.Warn++
+	}
+	for _, d := range r.DependencyHints {
+		if d.Suspicious {
+			lc.Warn++
+		} else {
+			lc.Info++
+		}
+	}
+	return lc
+}
+
+// LevelLabel returns a human-readable label for the given level.
+func LevelLabel(l Level) string {
+	switch l {
+	case LevelInfo:
+		return "INFO"
+	case LevelHigh:
+		return "HIGH"
+	default:
+		return "WARN"
+	}
 }
 
 // Detector identifies a single category of hidden or suspicious content.
@@ -116,16 +312,18 @@ func (p *Pipeline) Run(content string) *ParseResult {
 //  5. cdata-sections  — <![CDATA[ ... ]]> blocks
 //  6. hidden-comments — JS // and CSS /* */ comments
 func DefaultPipeline() *Pipeline {
-	return &Pipeline{
-		detectors: []Detector{
-			frontmatterDetector{},
-			htmlCommentDetector{},
-			suspiciousCharDetector{},
-			yamlRiskDetector{},
-			cdataSectionDetector{},
-			hiddenCommentDetector{},
-		},
+	dets := []Detector{
+		frontmatterDetector{},
+		htmlCommentDetector{},
+		suspiciousCharDetector{},
+		yamlRiskDetector{},
+		cdataSectionDetector{},
+		hiddenCommentDetector{},
 	}
+	if EnableDeps {
+		dets = append(dets, dependencyHintDetector{})
+	}
+	return &Pipeline{detectors: dets}
 }
 
 // --- detector implementations ---
@@ -170,6 +368,13 @@ type hiddenCommentDetector struct{}
 func (hiddenCommentDetector) Name() string { return "hidden-comments" }
 func (hiddenCommentDetector) Detect(lines []string, result *ParseResult) {
 	result.HiddenComments = extractHiddenComments(lines)
+}
+
+type dependencyHintDetector struct{}
+
+func (dependencyHintDetector) Name() string { return "dependency-hints" }
+func (dependencyHintDetector) Detect(lines []string, result *ParseResult) {
+	result.DependencyHints = extractDependencyHints(lines)
 }
 
 // suspiciousRunes maps known invisible/unusual Unicode code points to their names.
@@ -270,6 +475,48 @@ var suspiciousRunes = map[rune]string{
 	'\u03A4': "GREEK CAPITAL TAU (homoglyph: T)",
 	'\u03A5': "GREEK CAPITAL UPSILON (homoglyph: Y)",
 	'\u03A7': "GREEK CAPITAL CHI (homoglyph: X)",
+}
+
+// suspiciousCharLevels maps specific runes to their advisory severity level.
+// Runes not listed here default to LevelWarn.
+var suspiciousCharLevels = map[rune]Level{
+	// --- INFO: likely benign, informational ---
+	'\uFEFF': LevelInfo, // BOM
+	'\u00AD': LevelInfo, // soft hyphen
+	'\u00A0': LevelInfo, // no-break space
+	'\u2000': LevelInfo, '\u2001': LevelInfo, '\u2002': LevelInfo, '\u2003': LevelInfo,
+	'\u2004': LevelInfo, '\u2005': LevelInfo, '\u2006': LevelInfo, '\u2007': LevelInfo,
+	'\u2008': LevelInfo, '\u2009': LevelInfo, '\u200A': LevelInfo,
+	'\u202F': LevelInfo, '\u205F': LevelInfo, '\u3000': LevelInfo,
+	// --- HIGH: actively deceptive or dangerous ---
+	// Bidi controls (Trojan Source, CVE-2021-42574)
+	'\u202A': LevelHigh, '\u202B': LevelHigh, '\u202C': LevelHigh,
+	'\u202D': LevelHigh, '\u202E': LevelHigh,
+	'\u2066': LevelHigh, '\u2067': LevelHigh, '\u2068': LevelHigh, '\u2069': LevelHigh,
+	// Homoglyphs
+	'\u0430': LevelHigh, '\u0435': LevelHigh, '\u043E': LevelHigh,
+	'\u0440': LevelHigh, '\u0441': LevelHigh, '\u0443': LevelHigh, '\u0445': LevelHigh,
+	'\u0410': LevelHigh, '\u0412': LevelHigh, '\u0415': LevelHigh,
+	'\u041A': LevelHigh, '\u041C': LevelHigh, '\u041D': LevelHigh,
+	'\u041E': LevelHigh, '\u0420': LevelHigh, '\u0421': LevelHigh,
+	'\u0422': LevelHigh, '\u0425': LevelHigh,
+	'\u0391': LevelHigh, '\u0392': LevelHigh, '\u0395': LevelHigh, '\u0396': LevelHigh,
+	'\u0397': LevelHigh, '\u0399': LevelHigh, '\u039A': LevelHigh, '\u039C': LevelHigh,
+	'\u039D': LevelHigh, '\u039F': LevelHigh, '\u03A1': LevelHigh,
+	'\u03A4': LevelHigh, '\u03A5': LevelHigh, '\u03A7': LevelHigh,
+	// Language tag
+	'\U000E0001': LevelHigh,
+	// --- WARN: zero-width, invisible operators, variation selectors, bidi formatting ---
+	'\u200B': LevelWarn, '\u200C': LevelWarn, '\u200D': LevelWarn,
+	'\u2060': LevelWarn, '\u2061': LevelWarn, '\u2062': LevelWarn,
+	'\u2063': LevelWarn, '\u2064': LevelWarn,
+	'\u206A': LevelWarn, '\u206B': LevelWarn, '\u206C': LevelWarn,
+	'\u206D': LevelWarn, '\u206E': LevelWarn, '\u206F': LevelWarn,
+	'\uFE00': LevelWarn, '\uFE01': LevelWarn, '\uFE02': LevelWarn,
+	'\uFE03': LevelWarn, '\uFE04': LevelWarn, '\uFE05': LevelWarn,
+	'\uFE06': LevelWarn, '\uFE07': LevelWarn, '\uFE08': LevelWarn,
+	'\uFE09': LevelWarn, '\uFE0A': LevelWarn, '\uFE0B': LevelWarn,
+	'\uFE0C': LevelWarn, '\uFE0D': LevelWarn, '\uFE0E': LevelWarn, '\uFE0F': LevelWarn,
 }
 
 // Parse extracts all hidden and suspicious content from the raw text of a skill file.
@@ -627,4 +874,59 @@ func extractHiddenComments(lines []string) []HiddenComment {
 	}
 
 	return comments
+}
+
+// installPatterns matches common package manager install commands.
+// Group 1 captures the package name.
+var installPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\b(?:pip|pip3)\s+install\s+(?:-+\S+\s+)*['"]?(\S+?)['"]?(?:\s|$)`),
+	regexp.MustCompile(`\bnpm\s+(?:install|i)\s+(?:-+\S+\s+)*['"]?(\S+?)['"]?(?:\s|$)`),
+	regexp.MustCompile(`\bgem\s+install\s+['"]?(\S+?)['"]?(?:\s|$)`),
+	regexp.MustCompile(`\bgo\s+get\s+['"]?(\S+?)['"]?(?:\s|$)`),
+	regexp.MustCompile(`\bcargo\s+install\s+['"]?(\S+?)['"]?(?:\s|$)`),
+	regexp.MustCompile(`\bbrew\s+install\s+['"]?(\S+?)['"]?(?:\s|$)`),
+	regexp.MustCompile(`\b(?:apt-get|apt|yum|dnf)\s+install\s+(?:-+\S+\s+)*['"]?(\S+?)['"]?(?:\s|$)`),
+}
+
+// suspiciousPkgRe matches patterns that may indicate suspicious package names.
+var suspiciousPkgRe = regexp.MustCompile(`(?i)(?:.{30,}|^.{1,2}$|[^\w\-.\/@:])`)
+
+// isSuspiciousPkg checks a package name for heuristic warning signs.
+func isSuspiciousPkg(pkg string) bool {
+	if suspiciousPkgRe.MatchString(pkg) {
+		return true
+	}
+	// Check for 4+ consecutive repeated characters (typosquat hint).
+	if len(pkg) >= 4 {
+		for i := 0; i <= len(pkg)-4; i++ {
+			if pkg[i] == pkg[i+1] && pkg[i] == pkg[i+2] && pkg[i] == pkg[i+3] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// extractDependencyHints scans lines for package manager install commands
+// and returns advisory DependencyHint findings.
+func extractDependencyHints(lines []string) []DependencyHint {
+	var hints []DependencyHint
+	for i, line := range lines {
+		for _, pat := range installPatterns {
+			matches := pat.FindStringSubmatch(line)
+			if len(matches) < 2 {
+				continue
+			}
+			pkg := matches[1]
+			suspicious := isSuspiciousPkg(pkg)
+			hints = append(hints, DependencyHint{
+				Line:       i + 1,
+				Reference:  strings.TrimSpace(matches[0]),
+				Package:    pkg,
+				Suspicious: suspicious,
+			})
+			break // one hint per line
+		}
+	}
+	return hints
 }

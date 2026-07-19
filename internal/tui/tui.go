@@ -50,7 +50,7 @@ const (
 // Run is the entry point for the TUI. It loads the skill file, parses it,
 // enters raw terminal mode, and runs the interactive pager loop.
 // It returns a non-nil error only for unrecoverable failures.
-func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
+func Run(sf *loader.SkillFile, result *parser.ParseResult, comparison *parser.Comparison) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return fmt.Errorf("not a terminal — skill-inspector requires an interactive terminal")
 	}
@@ -85,7 +85,7 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 	s.updateSize()
 
 	sourceLines := buildSourceLines(sf)
-	hiddenLines := buildHiddenLines(result)
+	hiddenLines := buildHiddenLines(result, comparison)
 
 	// Read keypresses in a dedicated goroutine so the main loop can also
 	// react to SIGWINCH without waiting for a keypress.
@@ -174,7 +174,11 @@ func Run(sf *loader.SkillFile, result *parser.ParseResult) error {
 		case actionScrollBottom:
 			s.scrollOffset = maxScrollOffset(lines, s.height)
 		case actionShowHelp:
-			showHelp(s, keyCh)
+			if s.currentView == viewHidden {
+				showHiddenHelp(s, keyCh)
+			} else {
+				showHelp(s, keyCh)
+			}
 		case actionInstall:
 			runInstall(sf, result, s, keyCh)
 		}
@@ -329,16 +333,49 @@ func buildSourceLines(sf *loader.SkillFile) []string {
 }
 
 // buildHiddenLines constructs the hidden-content view as a slice of display lines.
-func buildHiddenLines(result *parser.ParseResult) []string {
+func buildHiddenLines(result *parser.ParseResult, comparison *parser.Comparison) []string {
 	var lines []string
 	add := func(s string) { lines = append(lines, s) }
+
+	badge := func(lvl parser.Level) string {
+		switch lvl {
+		case parser.LevelHigh:
+			return colorize.Red + "[HIGH]" + colorize.Reset
+		case parser.LevelWarn:
+			return colorize.Yellow + "[WARN]" + colorize.Reset
+		default:
+			return "[INFO]"
+		}
+	}
+
+	// Show baseline comparison if available.
+	if comparison != nil {
+		add(colorize.Bold + "── Baseline Comparison " + strings.Repeat("─", 49) + colorize.Reset)
+		if len(comparison.New) == 0 && len(comparison.Resolved) == 0 && comparison.Unchanged > 0 {
+			add("  ✓ No changes from baseline")
+		} else {
+			if len(comparison.New) > 0 {
+				add(fmt.Sprintf("  %s %d new finding(s)", colorize.Red+"[NEW]"+colorize.Reset, len(comparison.New)))
+				for _, f := range comparison.New {
+					add(fmt.Sprintf("    %s %s", badge(f.Level()), f.ID()))
+				}
+			}
+			if len(comparison.Resolved) > 0 {
+				add(fmt.Sprintf("  %s %d resolved finding(s)", colorize.Cyan+"[OK]"+colorize.Reset, len(comparison.Resolved)))
+			}
+			if comparison.Unchanged > 0 {
+				add(fmt.Sprintf("  %d unchanged finding(s)", comparison.Unchanged))
+			}
+		}
+		add("")
+	}
 
 	add(colorize.Bold + "── Frontmatter " + strings.Repeat("─", 60) + colorize.Reset)
 	if result.Frontmatter == nil {
 		add("  ✓ None found")
 	} else {
 		fm := result.Frontmatter
-		add(fmt.Sprintf("  Lines %d–%d:", fm.StartLine, fm.EndLine))
+		add(fmt.Sprintf("  %s Lines %d–%d:", badge(fm.Level()), fm.StartLine, fm.EndLine))
 		for i, l := range fm.Lines {
 			add(fmt.Sprintf("  %3d │ %s", fm.StartLine+i, stripANSI(l)))
 		}
@@ -349,6 +386,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	if len(result.HTMLComments) == 0 {
 		add("  ✓ None found")
 	} else {
+		add(fmt.Sprintf("  %s %d found", badge(result.HTMLComments[0].Level()), len(result.HTMLComments)))
 		for i, c := range result.HTMLComments {
 			add(fmt.Sprintf("  [%d] Lines %d–%d:", i+1, c.StartLine, c.EndLine))
 			for _, l := range strings.Split(c.Raw, "\n") {
@@ -364,7 +402,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 		add("  ✓ None found")
 	} else {
 		for _, sc := range result.SuspiciousChars {
-			add("  " + sc.Format())
+			add("  " + badge(sc.Level()) + " " + sc.Format())
 		}
 	}
 	add("")
@@ -374,7 +412,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 		add("  ✓ None found")
 	} else {
 		for _, yr := range result.YAMLRisks {
-			add("  " + yr.Format())
+			add("  " + badge(yr.Level()) + " " + yr.Format())
 		}
 	}
 	add("")
@@ -383,6 +421,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	if len(result.CDATASections) == 0 {
 		add("  ✓ None found")
 	} else {
+		add(fmt.Sprintf("  %s %d found", badge(result.CDATASections[0].Level()), len(result.CDATASections)))
 		for i, c := range result.CDATASections {
 			add(fmt.Sprintf("  [%d] Lines %d–%d:", i+1, c.StartLine, c.EndLine))
 			for _, l := range strings.Split(c.Raw, "\n") {
@@ -397,6 +436,7 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 	if len(result.HiddenComments) == 0 {
 		add("  ✓ None found")
 	} else {
+		add(fmt.Sprintf("  %s %d found", badge(result.HiddenComments[0].Level()), len(result.HiddenComments)))
 		for i, hc := range result.HiddenComments {
 			kindLabel := "CSS block"
 			if hc.Kind == "js-line" {
@@ -408,6 +448,36 @@ func buildHiddenLines(result *parser.ParseResult) []string {
 		}
 	}
 	add("")
+
+	// Dependency Hints (only shown when --check-deps is used)
+	if len(result.DependencyHints) > 0 {
+		add(colorize.Bold + "── Dependency Hints (advisory) " + strings.Repeat("─", 45) + colorize.Reset)
+		for _, dh := range result.DependencyHints {
+			label := fmt.Sprintf("  %s line %d: %s → %s", badge(dh.Level()), dh.Line, dh.Reference, dh.Package)
+			if dh.Suspicious {
+				label += colorize.Red + " ⚠ heuristic warning" + colorize.Reset
+			}
+			add(label)
+		}
+		add("")
+	}
+
+	// Summary
+	lc := result.LevelSummary()
+	add(colorize.Bold + "── Summary " + strings.Repeat("─", 63) + colorize.Reset)
+	if lc.Total() == 0 {
+		add("  ✓ All clear — no findings")
+	} else {
+		if lc.High > 0 {
+			add(fmt.Sprintf("  %s %d finding(s) — needs attention", badge(parser.LevelHigh), lc.High))
+		}
+		if lc.Warn > 0 {
+			add(fmt.Sprintf("  %s %d finding(s) — worth reviewing", badge(parser.LevelWarn), lc.Warn))
+		}
+		if lc.Info > 0 {
+			add(fmt.Sprintf("  %s %d finding(s) — informational", badge(parser.LevelInfo), lc.Info))
+		}
+	}
 
 	return lines
 }
@@ -540,6 +610,45 @@ func showHelp(s *state, keyCh <-chan action) {
 	}
 	renderModal(s, "Help", lines)
 	<-keyCh // wait for any key
+}
+
+// showHiddenHelp renders a modal explaining what each hidden-content finding means.
+func showHiddenHelp(s *state, keyCh <-chan action) {
+	lines := []string{
+		"Finding Interpretation Guide",
+		"",
+		"Frontmatter (INFO)",
+		"  YAML metadata block between --- markers at the top of the file.",
+		"  Usually benign — used by skill frameworks for names and config.",
+		"  Review for unexpected metadata or injected directives.",
+		"",
+		"HTML Comments (WARN)",
+		"  <!-- HTML comment tags --> in the skill content.",
+		"  Benign: used for readability notes in markdown.",
+		"  Risky: can hide injected prompts or payloads.",
+		"",
+		"Suspicious Characters (INFO/WARN/HIGH)",
+		"  Unicode characters that are invisible or confusable.",
+		"  Info: spaces, BOM, soft hyphens — usually formatting artifacts.",
+		"  Warn: zero-width chars, variation selectors — unusual in plain text.",
+		"  High: bidi overrides (Trojan Source), homoglyphs — actively deceptive.",
+		"",
+		"YAML Risks (INFO/WARN)",
+		"  YAML directives (%YAML) or multi-document separators (...).",
+		"  Info: version directives are typically benign.",
+		"  Warn: multi-doc separators can inject content after the frontmatter.",
+		"",
+		"CDATA Sections (WARN)",
+		"  <![CDATA[ ... ]]> blocks — unusual in markdown.",
+		"  Can be used to hide content from XML/HTML parsers.",
+		"",
+		"Hidden Comments JS/CSS (WARN)",
+		"  JavaScript // or CSS /* */ comments.",
+		"  Benign: code examples in the skill content.",
+		"  Risky: can hide instructions from casual review.",
+	}
+	renderModal(s, "Interpretation Guide", lines)
+	<-keyCh
 }
 
 // showInstallResult displays the install outcome and waits for a keypress.

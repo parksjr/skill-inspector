@@ -8,8 +8,9 @@ const (
 	Reset    = "\033[0m"
 	Bold     = "\033[1m"
 	Dim      = "\033[2m"
-	Cyan     = "\033[36m"
+	Red      = "\033[31m"
 	Yellow   = "\033[33m"
+	Cyan     = "\033[36m"
 	Magenta  = "\033[35m"
 	BoldCyan = "\033[1;36m"
 )

@@ -9,6 +9,16 @@ import (
 	"strings"
 )
 
+// excludedAgents is a set of agent names to skip during install.
+// Populated via ExcludeAgent from CLI flags (e.g. --no-symlink-goose).
+var excludedAgents = make(map[string]bool)
+
+// ExcludeAgent adds an agent name to the exclusion set so symlinks
+// are not created for that agent during install.
+func ExcludeAgent(name string) {
+	excludedAgents[strings.ToLower(name)] = true
+}
+
 // AgentDir describes a known agent skill directory.
 type AgentDir struct {
 	Name string // human-readable agent name, e.g. "claude"
@@ -64,34 +74,34 @@ func defaultAgentDirs() []AgentDir {
 func Install(skillName, sourcePath, content string, isURL bool) (*InstallResult, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		return nil, fmt.Errorf("cannot determine home directory: %w — ensure $HOME is set", err)
 	}
 
 	installBase := filepath.Join(home, ".agents", "skills")
 	installDir := filepath.Join(installBase, skillName)
 
 	if err := os.MkdirAll(installDir, 0o755); err != nil {
-		return nil, fmt.Errorf("cannot create install directory %q: %w", installDir, err)
+		return nil, fmt.Errorf("cannot create install directory %q: %w — check write permissions for ~/.agents/skills", installDir, err)
 	}
 
 	if isURL {
 		dest := filepath.Join(installDir, "SKILL.md")
 		if err := os.WriteFile(dest, []byte(content), 0o644); err != nil {
-			return nil, fmt.Errorf("cannot write SKILL.md: %w", err)
+			return nil, fmt.Errorf("cannot write SKILL.md: %w — check disk space and write permissions", err)
 		}
 	} else {
 		info, err := os.Stat(sourcePath)
 		if err != nil {
-			return nil, fmt.Errorf("cannot stat source %q: %w", sourcePath, err)
+			return nil, fmt.Errorf("cannot stat source %q: %w — verify the path exists and is readable", sourcePath, err)
 		}
 		if info.IsDir() {
 			if err := copyDir(sourcePath, installDir); err != nil {
-				return nil, fmt.Errorf("cannot copy directory: %w", err)
+				return nil, fmt.Errorf("cannot copy directory: %w — check source directory permissions", err)
 			}
 		} else {
 			dest := filepath.Join(installDir, "SKILL.md")
 			if err := copyFile(sourcePath, dest); err != nil {
-				return nil, fmt.Errorf("cannot copy file: %w", err)
+				return nil, fmt.Errorf("cannot copy file: %w — check source file permissions", err)
 			}
 		}
 	}
@@ -118,7 +128,7 @@ func Install(skillName, sourcePath, content string, isURL bool) (*InstallResult,
 func PlanInstall(skillName string) (*InstallPreview, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		return nil, fmt.Errorf("cannot determine home directory: %w — ensure $HOME is set", err)
 	}
 
 	installDir := filepath.Join(home, ".agents", "skills", skillName)
@@ -149,6 +159,18 @@ func resolvedAgentDirs(home string) []AgentDir {
 	for i := range agentDirs {
 		agentDirs[i].Path = expandHome(agentDirs[i].Path, home)
 	}
+
+	// Filter out agents excluded via --no-symlink-<agent> flags.
+	if len(excludedAgents) > 0 {
+		filtered := agentDirs[:0]
+		for _, ad := range agentDirs {
+			if !excludedAgents[strings.ToLower(ad.Name)] {
+				filtered = append(filtered, ad)
+			}
+		}
+		agentDirs = filtered
+	}
+
 	return agentDirs
 }
 
@@ -175,17 +197,17 @@ func linkSkill(skillName, installDir string, ad AgentDir) LinkResult {
 	if existing, err := os.Lstat(linkPath); err == nil {
 		if existing.Mode()&os.ModeSymlink != 0 {
 			if err := os.Remove(linkPath); err != nil {
-				lr.Err = fmt.Errorf("cannot remove existing symlink: %w", err)
+				lr.Err = fmt.Errorf("cannot remove existing symlink: %w — check permissions on the symlink", err)
 				return lr
 			}
 		} else {
-			lr.Err = fmt.Errorf("%q exists and is not a symlink — skipping", linkPath)
+			lr.Err = fmt.Errorf("%q exists and is not a symlink — skipping — remove or rename the existing item and try again", linkPath)
 			return lr
 		}
 	}
 
 	if err := os.Symlink(installDir, linkPath); err != nil {
-		lr.Err = fmt.Errorf("symlink failed: %w", err)
+		lr.Err = fmt.Errorf("symlink failed: %w — check that the parent directory exists and is writable", err)
 		return lr
 	}
 
@@ -207,18 +229,18 @@ func loadAgentDirs(home string) ([]AgentDir, error) {
 		return defaultAgentDirs(), nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("cannot stat config %q: %w", configPath, err)
+		return nil, fmt.Errorf("cannot stat config %q: %w — check ~/.config/skill-inspector/config", configPath, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("config %q is a symlink — refusing to open", configPath)
+		return nil, fmt.Errorf("config %q is a symlink — refusing to open — replace the symlink with a regular file", configPath)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("config %q is not a regular file", configPath)
+		return nil, fmt.Errorf("config %q is not a regular file — remove and recreate as a regular file", configPath)
 	}
 
 	f, err := os.Open(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open config %q: %w", configPath, err)
+		return nil, fmt.Errorf("cannot open config %q: %w — check file permissions", configPath, err)
 	}
 	defer f.Close()
 
@@ -237,7 +259,7 @@ func loadAgentDirs(home string) ([]AgentDir, error) {
 		dirs = append(dirs, AgentDir{Name: name, Path: line})
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading config: %w", err)
+		return nil, fmt.Errorf("error reading config: %w — verify config file format", err)
 	}
 	if len(dirs) == 0 {
 		return defaultAgentDirs(), nil
@@ -250,7 +272,7 @@ func loadAgentDirs(home string) ([]AgentDir, error) {
 func copyDir(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		return fmt.Errorf("cannot read directory %q: %w", src, err)
+		return fmt.Errorf("cannot read directory %q: %w — check directory permissions", src, err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
@@ -269,18 +291,18 @@ func copyDir(src, dst string) error {
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
-		return fmt.Errorf("cannot open %q: %w", src, err)
+		return fmt.Errorf("cannot open %q: %w — check file permissions", src, err)
 	}
 	defer in.Close()
 
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("cannot create %q: %w", dst, err)
+		return fmt.Errorf("cannot create %q: %w — check directory permissions and disk space", dst, err)
 	}
 	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy failed %q → %q: %w", src, dst, err)
+		return fmt.Errorf("copy failed %q → %q: %w — check disk space", src, dst, err)
 	}
 	return nil
 }
@@ -301,13 +323,13 @@ func expandHome(path, home string) string {
 func verifyAgentDir(ad AgentDir) error {
 	info, err := os.Lstat(ad.Path)
 	if err != nil {
-		return fmt.Errorf("agent dir %q (agent=%s): %w", ad.Path, ad.Name, err)
+		return fmt.Errorf("agent dir %q (agent=%s): %w — ensure the agent skills directory exists", ad.Path, ad.Name, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("agent dir %q (agent=%s) is a symlink — refusing to use", ad.Path, ad.Name)
+		return fmt.Errorf("agent dir %q (agent=%s) is a symlink — refusing to use — replace the symlink with a real directory", ad.Path, ad.Name)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("agent dir %q (agent=%s) is not a directory", ad.Path, ad.Name)
+		return fmt.Errorf("agent dir %q (agent=%s) is not a directory — remove the file and create a directory instead", ad.Path, ad.Name)
 	}
 	return nil
 }
